@@ -107,7 +107,7 @@ export const Header: React.FC<HeaderProps> = ({
                 HERITAGE
               </span>
               <span
-                className={`brand-descriptor hidden sm:block text-[7px] sm:text-[8px] uppercase mt-1.5 transition-colors ${
+                className={`brand-descriptor hidden sm:block text-[7.2px] sm:text-[8.1px] tracking-[0.015em] uppercase mt-0.5 transition-colors ${
                   isScrolled || currentRoute !== '/' ? 'text-[#002141]' : 'text-[#D6BB8F]'
                 }`}
               >
@@ -232,7 +232,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <img src="/assets/favicon.svg" alt="HERITAGE" className="w-7 h-7" />
                 <div className="flex flex-col">
                   <span className="brand-wordmark text-base text-[#002141]">HERITAGE</span>
-                  <span className="brand-descriptor text-[6px] uppercase text-[#002141] mt-1">
+                  <span className="brand-descriptor text-[7.2px] tracking-[0.015em] uppercase text-[#002141] mt-0.5">
                     MONTRES ET ACCESSOIRES
                   </span>
                 </div>

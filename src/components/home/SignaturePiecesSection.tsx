@@ -48,10 +48,10 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
   }, [SIGNATURE_ITEMS]);
   const [activeIndex, setActiveIndex] = useState(INITIAL_INDEX);
   const [withAnimation, setWithAnimation] = useState(true);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState<number>(() => {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [trackWidth, setTrackWidth] = useState<number>(() => {
     if (typeof window !== 'undefined') {
-      return Math.min(1280, window.innerWidth);
+      return Math.min(1024, window.innerWidth);
     }
     return 375;
   });
@@ -62,15 +62,15 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
 
   // ResizeObserver to calculate dynamic track dimensions
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!trackRef.current) return;
     const updateSize = () => {
-      if (containerRef.current) {
-        setContainerWidth(containerRef.current.offsetWidth);
+      if (trackRef.current) {
+        setTrackWidth(trackRef.current.clientWidth);
       }
     };
     updateSize();
     const observer = new ResizeObserver(updateSize);
-    observer.observe(containerRef.current);
+    observer.observe(trackRef.current);
     return () => observer.disconnect();
   }, []);
 
@@ -96,21 +96,25 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
     }
   }, [withAnimation]);
 
-  // Responsive item sizing & spacing
-  const isMobile = containerWidth < 640;
-  const isTablet = containerWidth >= 640 && containerWidth < 1024;
+  // Responsive item sizing & spacing for centered 3-card layout
+  const isMobile = trackWidth < 640;
+  const isTablet = trackWidth >= 640 && trackWidth < 1024;
+  const isDesktop = trackWidth >= 1024;
 
-  const gap = isMobile ? 8 : isTablet ? 20 : 28;
+  const gap = isMobile ? 12 : isTablet ? 20 : 28;
+
+  // Compute cardWidth so 3 cards fit comfortably within the centered stage
+  const rawCardWidth = Math.floor((trackWidth - 2 * gap) / 3);
   const cardWidth = isMobile
-    ? Math.max(140, Math.min(180, Math.floor(containerWidth * 0.44)))
+    ? Math.min(230, Math.max(170, Math.floor(trackWidth * 0.58)))
     : isTablet
-    ? 270
-    : Math.min(330, Math.floor((containerWidth - 2 * gap) / 3));
+    ? Math.min(280, Math.max(210, rawCardWidth))
+    : Math.min(340, Math.max(260, rawCardWidth));
 
   const step = cardWidth + gap;
 
-  // Formula to perfectly center card activeIndex inside container
-  const targetX = containerWidth / 2 - cardWidth / 2 - activeIndex * step;
+  // Formula to perfectly center activeIndex card in the exact middle of the section/track
+  const targetX = trackWidth / 2 - cardWidth / 2 - activeIndex * step;
 
   // Infinite next / prev without limits in either direction
   const handlePrev = () => {
@@ -138,14 +142,14 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
   if (!SIGNATURE_ITEMS.length) return null;
 
   return (
-    <section className="pt-12 pb-20 md:pt-20 md:pb-28 bg-[#FAF9F7] border-b border-[#002141]/10 overflow-hidden select-none">
-      <div className="max-w-7xl mx-auto px-1 sm:px-6 lg:px-8">
+    <section className="pt-12 pb-20 md:pt-24 md:pb-32 bg-[#FAF9F7] border-b border-[#002141]/10 overflow-hidden select-none">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Section Header with elegant French typography */}
-        <div className="text-center max-w-3xl mx-auto mb-8 md:mb-16">
+        <div className="text-center max-w-3xl mx-auto mb-8 md:mb-14">
           <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.25em] sm:tracking-[0.28em] text-[#AC854B] block mb-2 sm:mb-3">
             HERITAGE ABIDJAN &middot; SÉLECTION MAISON
           </span>
-          <h2 className="font-playfair text-2xl sm:text-4xl md:text-5xl font-bold text-[#002141] tracking-tight mb-3 sm:mb-4">
+          <h2 className="font-playfair text-2xl sm:text-4xl md:text-5xl font-bold text-[#002141] tracking-tight mb-2 sm:mb-4">
             Explorez Nos Pièces Signatures
           </h2>
           <p className="text-xs sm:text-base text-[#4A4A4A] leading-relaxed max-w-2xl mx-auto px-2 sm:px-0">
@@ -153,8 +157,8 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
           </p>
         </div>
 
-        {/* Carousel Container */}
-        <div ref={containerRef} className="relative max-w-5xl mx-auto">
+        {/* Carousel Container - Centered 3-card stage */}
+        <div className="relative w-full max-w-5xl mx-auto px-1 sm:px-4">
           {/* Navigation Arrows */}
           <button
             type="button"
@@ -164,9 +168,9 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
               handlePrev();
             }}
             aria-label="Pièce précédente"
-            className="absolute left-2 sm:-left-4 md:-left-8 top-[35%] sm:top-1/3 -translate-y-1/2 z-40 w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-white/95 border border-[#002141]/15 text-[#002141] hover:bg-[#002141] hover:text-white shadow-md hidden sm:flex items-center justify-center transition-all duration-200 cursor-pointer group focus:outline-hidden"
+            className="absolute left-0 sm:-left-3 md:-left-6 top-[36%] sm:top-[38%] -translate-y-1/2 z-40 w-9 h-9 sm:w-11 sm:h-11 md:w-12 md:h-12 rounded-full bg-white/95 border border-[#002141]/15 text-[#002141] hover:bg-[#002141] hover:text-white shadow-xl flex items-center justify-center transition-all duration-200 cursor-pointer group focus:outline-hidden active:scale-95 hover:scale-105"
           >
-            <ChevronLeft className="w-5 h-5 group-hover:-translate-x-0.5 transition-transform" />
+            <ChevronLeft className="w-5 h-5 md:w-6 md:h-6 group-hover:-translate-x-0.5 transition-transform" />
           </button>
 
           <button
@@ -177,22 +181,22 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
               handleNext();
             }}
             aria-label="Pièce suivante"
-            className="absolute right-2 sm:-right-4 md:-right-8 top-[35%] sm:top-1/3 -translate-y-1/2 z-40 w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-white/95 border border-[#002141]/15 text-[#002141] hover:bg-[#002141] hover:text-white shadow-md hidden sm:flex items-center justify-center transition-all duration-200 cursor-pointer group focus:outline-hidden"
+            className="absolute right-0 sm:-right-3 md:-right-6 top-[36%] sm:top-[38%] -translate-y-1/2 z-40 w-9 h-9 sm:w-11 sm:h-11 md:w-12 md:h-12 rounded-full bg-white/95 border border-[#002141]/15 text-[#002141] hover:bg-[#002141] hover:text-white shadow-xl flex items-center justify-center transition-all duration-200 cursor-pointer group focus:outline-hidden active:scale-95 hover:scale-105"
           >
-            <ChevronRight className="w-5 h-5 group-hover:translate-x-0.5 transition-transform" />
+            <ChevronRight className="w-5 h-5 md:w-6 md:h-6 group-hover:translate-x-0.5 transition-transform" />
           </button>
 
-          {/* Fluid Sliding Track powered by motion */}
-          <div className="overflow-visible py-4 sm:py-8 touch-pan-y">
+          {/* Fluid Sliding Track - Expanded vertical height */}
+          <div ref={trackRef} className="overflow-hidden py-6 sm:py-12 touch-pan-y">
             <motion.div
               drag="x"
               dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={0.2}
+              dragElastic={0.18}
               onDragEnd={(_, info) => {
-                const threshold = 25;
-                if (info.offset.x < -threshold || info.velocity.x < -150) {
+                const threshold = 20;
+                if (info.offset.x < -threshold || info.velocity.x < -120) {
                   handleNext();
-                } else if (info.offset.x > threshold || info.velocity.x > 150) {
+                } else if (info.offset.x > threshold || info.velocity.x > 120) {
                   handlePrev();
                 }
               }}
@@ -202,9 +206,9 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
                 withAnimation
                   ? {
                       type: 'spring',
-                      stiffness: 220,
+                      stiffness: 240,
                       damping: 26,
-                      mass: 0.8
+                      mass: 0.75
                     }
                   : { duration: 0 }
               }
@@ -212,8 +216,23 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
               style={{ gap: `${gap}px` }}
             >
               {EXTENDED_ITEMS.map(({ item, uniqueKey }, index) => {
+                const distance = Math.abs(index - activeIndex);
                 const isCenter = index === activeIndex;
-                const isNeighbor = Math.abs(index - activeIndex) === 1;
+
+                // Scale and opacity calculation matching reference screenshot 215215.png
+                let scaleVal = 0.60;
+                let opacityVal = 0;
+
+                if (distance === 0) {
+                  scaleVal = isDesktop ? 1.12 : isTablet ? 1.08 : 1.05;
+                  opacityVal = 1.0;
+                } else if (distance === 1) {
+                  scaleVal = isDesktop ? 0.92 : isTablet ? 0.90 : 0.88;
+                  opacityVal = 1.0;
+                } else {
+                  scaleVal = 0.60;
+                  opacityVal = 0;
+                }
 
                 return (
                   <motion.div
@@ -224,32 +243,32 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
                       }
                     }}
                     animate={{
-                      scale: isCenter ? (isMobile ? 1.04 : 1.08) : isNeighbor ? 0.90 : 0.82,
-                      opacity: isCenter ? 1 : isNeighbor ? 0.72 : 0.4,
-                      filter: isCenter ? 'blur(0px)' : isNeighbor ? 'blur(0px)' : 'blur(0.5px)'
+                      scale: scaleVal,
+                      opacity: opacityVal,
+                      pointerEvents: opacityVal > 0.1 ? 'auto' : 'none'
                     }}
                     transition={
                       withAnimation
                         ? {
-                            duration: 0.45,
-                            ease: [0.25, 1, 0.5, 1]
+                            duration: 0.4,
+                            ease: [0.22, 1, 0.36, 1]
                           }
                         : { duration: 0 }
                     }
-                    className="shrink-0 flex flex-col items-center text-center cursor-pointer select-none"
+                    className="shrink-0 flex flex-col items-center text-center cursor-pointer select-none transition-all"
                     style={{
                       width: `${cardWidth}px`,
-                      zIndex: isCenter ? 30 : 10
+                      zIndex: isCenter ? 30 : distance === 1 ? 10 : 0
                     }}
                   >
                     {/* Square Framed Box matching the reference design */}
                     <div
-                      className={`premium-section-card w-full bg-white rounded-none border p-2.5 sm:p-7 flex items-center justify-center relative overflow-hidden transition-all duration-400 ${
+                      className={`premium-section-card w-full bg-white rounded-none border p-2.5 sm:p-6 flex items-center justify-center relative overflow-hidden transition-all duration-300 ${
                         isCenter
-                          ? 'border-[#002141]/30 shadow-2xl ring-1 ring-[#AC854B]/50'
-                          : 'border-[#002141]/10 shadow-xs hover:border-[#002141]/25'
+                          ? 'border-[#AC854B] shadow-2xl ring-1 ring-[#AC854B]/60'
+                          : 'border-[#002141]/10 shadow-sm hover:border-[#002141]/30 hover:shadow-md'
                       }`}
-                      style={{ aspectRatio: '1 / 1.05' }}
+                      style={{ aspectRatio: '1 / 1.02' }}
                     >
                       {/* Wishlist Button */}
                       {(() => {
@@ -291,13 +310,13 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
                           src={item.image}
                           alt={item.title}
                           animate={{
-                            scale: isCenter ? (isMobile ? 1.08 : 1.15) : 0.95
+                            scale: isCenter ? 1.12 : 0.92
                           }}
                           transition={
                             withAnimation
                               ? {
-                                  duration: 0.45,
-                                  ease: [0.25, 1, 0.5, 1]
+                                  duration: 0.4,
+                                  ease: [0.22, 1, 0.36, 1]
                                 }
                               : { duration: 0 }
                           }
@@ -311,9 +330,9 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
                     </div>
 
                     {/* Product Information below card */}
-                    <div className="mt-2 sm:mt-5 w-full px-0.5 sm:px-2">
+                    <div className="mt-2.5 sm:mt-5 w-full px-1">
                       <h3
-                        className={`font-playfair text-xs sm:text-xl font-bold transition-colors line-clamp-1 ${
+                        className={`font-playfair text-xs sm:text-lg font-bold transition-colors line-clamp-1 ${
                           isCenter ? 'text-[#002141]' : 'text-[#3A3A3A]'
                         }`}
                       >
@@ -326,8 +345,8 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
                         {item.specs}
                       </p>
                       <p
-                        className={`font-semibold text-xs sm:text-base tracking-wide ${
-                          isCenter ? 'text-[#002141] font-bold text-xs sm:text-base' : 'text-[#4A4A4A]'
+                        className={`tracking-wide transition-all ${
+                          isCenter ? 'text-[#002141] font-bold text-xs sm:text-base' : 'text-[#555555] font-semibold text-[11px] sm:text-sm'
                         }`}
                       >
                         {formatXOF(item.priceXOF)}
@@ -338,10 +357,10 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
                         {isCenter && (
                           <motion.button
                             type="button"
-                            initial={{ opacity: 0, y: 6 }}
+                            initial={{ opacity: 0, y: 4 }}
                             animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: 6 }}
-                            transition={{ duration: 0.3 }}
+                            exit={{ opacity: 0, y: 4 }}
+                            transition={{ duration: 0.25 }}
                             id={`signature-view-details-${uniqueKey}`}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -363,7 +382,7 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
           </div>
 
           {/* Dots Indicator */}
-          <div className="flex justify-center items-center gap-2 mt-4">
+          <div className="flex justify-center items-center gap-2 mt-4 sm:mt-6">
             {SIGNATURE_ITEMS.map((item, idx) => (
               <button
                 key={item.id}
@@ -372,7 +391,7 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
                 onClick={() => handleDotClick(idx)}
                 className={`h-2 transition-all duration-300 rounded-full cursor-pointer ${
                   realActiveOriginalIndex === idx
-                    ? 'w-8 bg-[#002141]'
+                    ? 'w-7 sm:w-8 bg-[#002141]'
                     : 'w-2 bg-[#002141]/25 hover:bg-[#002141]/50'
                 }`}
               />
