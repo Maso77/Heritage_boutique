@@ -7,7 +7,8 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const PORT = 3000;
+const requestedPort = Number(process.env.PORT);
+const PORT = Number.isInteger(requestedPort) && requestedPort > 0 ? requestedPort : 3000;
 const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
 const MEDIA_BUCKET = 'heritage-media';
 
