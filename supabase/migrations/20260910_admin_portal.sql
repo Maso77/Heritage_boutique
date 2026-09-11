@@ -147,6 +147,16 @@ create table if not exists public.products (
 
 -- Compatibility with the earlier HERITAGE schema. These columns keep legacy
 -- product records readable while the portal uses the richer columns above.
+-- `create table if not exists` does not extend an already-existing table.
+-- Keep this baseline before the constraint and RLS statements below so the
+-- migration can also be run safely on the original storefront schema.
+alter table public.products add column if not exists name text not null default '';
+alter table public.products add column if not exists slug text not null default '';
+alter table public.products add column if not exists sku text;
+alter table public.products add column if not exists reference text;
+alter table public.products add column if not exists brand text;
+alter table public.products add column if not exists category text not null default 'montres';
+alter table public.products add column if not exists short_description text;
 alter table public.products add column if not exists description_html text;
 alter table public.products add column if not exists purchase_price_xof numeric(14,2) not null default 0;
 alter table public.products add column if not exists regular_price_xof numeric(14,2) not null default 0;
@@ -154,10 +164,15 @@ alter table public.products add column if not exists sale_price_xof numeric(14,2
 alter table public.products add column if not exists stock_quantity integer not null default 0;
 alter table public.products add column if not exists low_stock_threshold integer not null default 2;
 alter table public.products add column if not exists primary_media_id uuid;
+alter table public.products add column if not exists attributes jsonb not null default '{}'::jsonb;
 alter table public.products add column if not exists colors jsonb not null default '[]'::jsonb;
+alter table public.products add column if not exists faq jsonb not null default '[]'::jsonb;
 alter table public.products add column if not exists seo_title text;
 alter table public.products add column if not exists seo_description text;
+alter table public.products add column if not exists status text not null default 'draft';
 alter table public.products add column if not exists created_by uuid references public.profiles(id) on delete set null;
+alter table public.products add column if not exists created_at timestamptz not null default now();
+alter table public.products add column if not exists updated_at timestamptz not null default now();
 alter table public.products add column if not exists price_xof numeric(14,2) not null default 0;
 alter table public.products add column if not exists stock_count integer not null default 0;
 alter table public.products add column if not exists stock_status text not null default 'En stock';
