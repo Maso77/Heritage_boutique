@@ -70,6 +70,21 @@ function sendError(res: Response, status: number, message: string) {
   return res.status(status).json({ error: message });
 }
 
+/**
+ * Keep database details out of browser responses while telling an authenticated
+ * administrator when a failed, transactional CMS migration is the likely cause.
+ */
+function sendSupabaseFailure(res: Response, error: unknown, fallback: string) {
+  console.error('[HERITAGE Supabase]', error);
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code || '')
+    : '';
+  if (['42703', '42P01', 'PGRST204', 'PGRST205'].includes(code)) {
+    return sendError(res, 503, 'La structure Supabase du portail est incomplète. Exécutez intégralement la migration CMS, puis rechargez le portail.');
+  }
+  return sendError(res, 503, fallback);
+}
+
 function text(value: unknown, max = 5000) {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
 }
@@ -764,8 +779,8 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
       recentOrders: recentResult.data || [],
       lowStockProducts: lowStockProducts.slice(0, 8).map((product: any) => ({ ...product, stock_status: stockStatus(product.stock_quantity, product.low_stock_threshold, product.stock_policy) }))
     });
-  } catch {
-    sendError(res, 503, 'Les statistiques sont indisponibles.');
+  } catch (error) {
+    sendSupabaseFailure(res, error, 'Les statistiques sont indisponibles.');
   }
 });
 
@@ -777,8 +792,8 @@ app.get('/api/admin/products', async (_req: AdminRequest, res: Response) => {
       .order('updated_at', { ascending: false });
     if (error) throw error;
     res.json(data || []);
-  } catch {
-    sendError(res, 503, 'Le catalogue est indisponible.');
+  } catch (error) {
+    sendSupabaseFailure(res, error, 'Le catalogue est indisponible.');
   }
 });
 

@@ -250,7 +250,7 @@ function PanelHeader({ eyebrow, title, description, action }: { eyebrow: string;
         <h1 className="admin-page-title font-playfair mt-2 font-semibold text-[#002141]">{title}</h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[#3A3A3A]">{description}</p>
       </div>
-      {action}
+      {action && <div className="shrink-0 self-start">{action}</div>}
     </div>
   );
 }
@@ -260,6 +260,16 @@ function EmptyState({ title, body }: { title: string; body: string }) {
     <div className="admin-empty-state border border-dashed border-[#002141]/20 bg-white px-5 py-8 text-center">
       <p className="font-playfair text-lg font-semibold text-[#002141]">{title}</p>
       <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-[#3A3A3A]">{body}</p>
+    </div>
+  );
+}
+
+function DataUnavailable({ message }: { message: string }) {
+  return (
+    <div role="alert" className="admin-empty-state border border-[#AC854B]/45 bg-[#fffaf0] px-5 py-8 text-center">
+      <p className="font-playfair text-lg font-semibold text-[#002141]">Les données du portail sont indisponibles</p>
+      <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-[#3A3A3A]">{message}</p>
+      <p className="mx-auto mt-3 max-w-xl text-xs leading-relaxed text-[#3A3A3A]">Aucun produit n’a été supprimé. Vérifiez la migration CMS dans Supabase, puis actualisez cette page.</p>
     </div>
   );
 }
@@ -474,6 +484,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('heritage-admin-sidebar-collapsed') === 'true');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState('');
   const [dashboard, setDashboard] = useState<AnyRecord | null>(null);
   const [products, setProducts] = useState<AnyRecord[]>([]);
@@ -525,6 +536,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
 
   const loadTab = async (tab: AdminTab) => {
     setLoading(true);
+    setLoadError('');
     try {
       if (tab === 'dashboard') setDashboard(await adminRequest(dashboardUrl()));
       if (tab === 'products') {
@@ -548,7 +560,9 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
         setResources((current) => ({ ...current, [tab]: records }));
       }
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Les données ne sont pas disponibles.');
+      const message = error instanceof Error ? error.message : 'Les données ne sont pas disponibles.';
+      setLoadError(message);
+      notify(message);
     } finally {
       setLoading(false);
     }
@@ -808,7 +822,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
         <div className={`border-t border-[#FAF9F7]/10 p-3 ${sidebarCollapsed ? 'lg:px-2' : ''}`}><div className={sidebarCollapsed ? 'lg:sr-only' : ''}><p className="truncate text-[13px] font-semibold">{admin.full_name || 'Administrateur'}</p><p className="mt-1 truncate text-xs text-[#FAF9F7]/60">{admin.email}</p></div><button type="button" onClick={() => void logout()} title={sidebarCollapsed ? 'Déconnexion' : undefined} className={`mt-3 flex min-h-10 items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-[#D6BB8F] transition-colors hover:text-[#FAF9F7] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D6BB8F] ${sidebarCollapsed ? 'lg:mx-auto lg:mt-0' : ''}`}><LogOut className="h-4 w-4 shrink-0" /><span className={sidebarCollapsed ? 'lg:sr-only' : ''}>Déconnexion</span></button></div>
       </aside>
       <div className={`transition-[padding] duration-200 ease-out ${sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-64'}`}><header className="sticky top-0 z-30 flex min-h-16 items-center justify-between border-b border-[#002141]/10 bg-[#F5F3EF]/95 px-4 py-2 backdrop-blur sm:px-6"><div className="flex items-center gap-3"><button type="button" onClick={() => setSidebarOpen(true)} className="admin-icon-button lg:hidden" aria-label="Ouvrir le menu"><Menu className="h-5 w-5" /></button><button type="button" onClick={toggleSidebar} className="admin-icon-button hidden lg:inline-flex" aria-label={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'} title={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'}><PanelLeftOpen className={`h-5 w-5 transition-transform duration-200 ${sidebarCollapsed ? 'rotate-180' : ''}`} /></button><div><p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#AC854B]">Portail privé</p><p className="text-[13px] font-semibold text-[#002141]">{NAVIGATION.find((item) => item.id === activeTab)?.label}</p></div></div><button type="button" onClick={() => navigate('/')} className="admin-secondary-button hidden sm:inline-flex"><PanelLeftClose className="h-4 w-4" /> Voir la boutique</button></header>
-        <main className="px-4 py-5 sm:px-6 lg:px-8">{loading ? <div className="flex min-h-80 items-center justify-center text-sm text-[#3A3A3A]"><LoaderCircle className="mr-3 h-5 w-5 animate-spin text-[#AC854B]" /> Chargement des données sécurisées…</div> : content}</main>
+        <main className="px-4 py-5 sm:px-6 lg:px-8">{loading ? <div className="flex min-h-80 items-center justify-center text-sm text-[#3A3A3A]"><LoaderCircle className="mr-3 h-5 w-5 animate-spin text-[#AC854B]" /> Chargement des données sécurisées…</div> : loadError ? <DataUnavailable message={loadError} /> : content}</main>
       </div>
       {notice && <div role="status" className="fixed bottom-5 right-5 z-[60] max-w-sm border border-[#D6BB8F] bg-[#002141] px-4 py-3 text-sm text-[#FAF9F7] shadow-xl"><CheckCircle2 className="mr-2 inline h-4 w-4 text-[#D6BB8F]" />{notice}</div>}
     </div>
