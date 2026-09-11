@@ -811,15 +811,58 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     <div className="admin-portal min-h-screen bg-[#F5F3EF] text-[#002141]">
       {sidebarOpen && <button type="button" className="fixed inset-0 z-40 bg-[#002141]/60 lg:hidden" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu" />}
       <aside className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-[#002141] text-[#FAF9F7] shadow-2xl transition-[width,transform] duration-200 ease-out lg:translate-x-0 ${sidebarCollapsed ? 'lg:w-16' : 'lg:w-64'} ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className={`flex items-center justify-between border-b border-[#FAF9F7]/10 p-4 ${sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''}`}>
-          <a href="/" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="flex min-w-0 items-center gap-3 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D6BB8F]" aria-label="HERITAGE — retourner à l'accueil">
-            {sidebarCollapsed ? <span className="relative hidden h-9 w-9 overflow-hidden lg:block" aria-label="Monogramme HERITAGE"><img src="/assets/logo-white.svg" alt="" className="absolute -left-[54px] top-0 h-auto w-36 max-w-none" /></span> : <img src="/assets/logo-white.svg" alt="HERITAGE — Montres et Accessoires" className="h-auto w-32 object-contain object-left" />}
-          </a>
+        <div className={`flex items-center justify-between border-b border-[#FAF9F7]/10 p-4 transition-all duration-200 ${sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''}`}>
+          <button type="button" onClick={() => selectTab('dashboard')} className="flex min-w-0 items-center gap-3 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D6BB8F] group" aria-label="Tableau de bord administrateur">
+            <div className="relative flex h-8 w-8 shrink-0 items-center justify-center">
+              <img src="/assets/favicon.svg" alt="Monogramme HERITAGE" className="h-full w-full object-contain" />
+            </div>
+            <div className={`flex flex-col overflow-hidden whitespace-nowrap transition-all duration-200 ease-out text-left ${sidebarCollapsed ? 'lg:w-0 lg:opacity-0' : 'lg:w-[130px] lg:opacity-100'}`}>
+              <span className="text-[15px] font-bold tracking-widest text-[#FAF9F7] group-hover:text-[#D6BB8F] transition-colors">
+                HERITAGE
+              </span>
+              <span className="mt-0.5 text-[6.5px] font-bold uppercase tracking-[0.2em] text-[#D6BB8F]">
+                Portail Admin
+              </span>
+            </div>
+          </button>
           <button type="button" onClick={toggleSidebar} className="admin-sidebar-icon hidden lg:inline-flex" aria-label={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'} aria-expanded={!sidebarCollapsed} title={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'}><PanelLeftOpen className={`h-5 w-5 transition-transform duration-200 ${sidebarCollapsed ? 'rotate-180' : ''}`} /></button>
           <button type="button" onClick={() => setSidebarOpen(false)} className="admin-sidebar-icon lg:hidden" aria-label="Fermer le menu"><X className="h-5 w-5" /></button>
         </div>
-        <nav className="flex-1 overflow-y-auto p-2" aria-label="Navigation administration">{NAVIGATION.map((item, index) => { const Icon = item.icon; const previous = NAVIGATION[index - 1]; return <React.Fragment key={item.id}>{item.section && <p className={`px-2 pb-1 text-[9px] font-bold uppercase tracking-[0.16em] text-[#D6BB8F]/80 ${previous ? 'pt-5' : 'pt-2'} ${sidebarCollapsed ? 'lg:sr-only' : ''}`}>{item.section}</p>}<button type="button" onClick={() => selectTab(item.id)} title={sidebarCollapsed ? item.label : undefined} className={`flex min-h-10 w-full items-center gap-2.5 px-3 text-left text-[13px] font-semibold transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#D6BB8F] ${sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''} ${activeTab === item.id ? 'bg-[#AC854B] text-[#002141]' : 'text-[#FAF9F7]/82 hover:bg-[#FAF9F7]/10 hover:text-[#FAF9F7]'}`}><Icon className="h-4 w-4 shrink-0" aria-hidden="true" /><span className={sidebarCollapsed ? 'lg:sr-only' : ''}>{item.label}</span></button></React.Fragment>; })}</nav>
-        <div className={`border-t border-[#FAF9F7]/10 p-3 ${sidebarCollapsed ? 'lg:px-2' : ''}`}><div className={sidebarCollapsed ? 'lg:sr-only' : ''}><p className="truncate text-[13px] font-semibold">{admin.full_name || 'Administrateur'}</p><p className="mt-1 truncate text-xs text-[#FAF9F7]/60">{admin.email}</p></div><button type="button" onClick={() => void logout()} title={sidebarCollapsed ? 'Déconnexion' : undefined} className={`mt-3 flex min-h-10 items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-[#D6BB8F] transition-colors hover:text-[#FAF9F7] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D6BB8F] ${sidebarCollapsed ? 'lg:mx-auto lg:mt-0' : ''}`}><LogOut className="h-4 w-4 shrink-0" /><span className={sidebarCollapsed ? 'lg:sr-only' : ''}>Déconnexion</span></button></div>
+        <nav className="flex-1 overflow-y-auto p-2" aria-label="Navigation administration">
+          {NAVIGATION.map((item, index) => {
+            const Icon = item.icon;
+            const previous = NAVIGATION[index - 1];
+            return (
+              <React.Fragment key={item.id}>
+                {item.section && (
+                  <div className={`overflow-hidden transition-all duration-200 ease-out ${sidebarCollapsed ? 'lg:h-0 lg:opacity-0' : 'lg:h-auto lg:opacity-100'}`}>
+                    <p className={`px-2 pb-1 text-[9px] font-bold uppercase tracking-[0.16em] text-[#D6BB8F]/80 whitespace-nowrap ${previous ? 'pt-5' : 'pt-2'}`}>
+                      {item.section}
+                    </p>
+                  </div>
+                )}
+                <button type="button" onClick={() => selectTab(item.id)} title={sidebarCollapsed ? item.label : undefined} className={`flex min-h-10 w-full items-center gap-3 px-3 text-left text-[13px] font-semibold transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#D6BB8F] rounded-md ${sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''} ${activeTab === item.id ? 'bg-[#AC854B] text-[#002141] shadow-sm' : 'text-[#FAF9F7]/82 hover:bg-[#FAF9F7]/10 hover:text-[#FAF9F7]'}`}>
+                  <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+                  <span className={`overflow-hidden whitespace-nowrap transition-all duration-200 ease-out ${sidebarCollapsed ? 'lg:w-0 lg:opacity-0' : 'lg:w-[160px] lg:opacity-100'}`}>
+                    {item.label}
+                  </span>
+                </button>
+              </React.Fragment>
+            );
+          })}
+        </nav>
+        <div className={`border-t border-[#FAF9F7]/10 p-3 flex flex-col transition-all duration-200 ${sidebarCollapsed ? 'lg:px-2 lg:items-center' : ''}`}>
+          <div className={`overflow-hidden whitespace-nowrap transition-all duration-200 ease-out ${sidebarCollapsed ? 'lg:w-0 lg:h-0 lg:opacity-0' : 'lg:w-[200px] lg:h-auto lg:opacity-100'}`}>
+            <p className="truncate text-[13px] font-semibold">{admin.full_name || 'Administrateur'}</p>
+            <p className="mt-1 truncate text-xs text-[#FAF9F7]/60">{admin.email}</p>
+          </div>
+          <button type="button" onClick={() => void logout()} title={sidebarCollapsed ? 'Déconnexion' : undefined} className={`flex min-h-10 w-full items-center gap-3 text-xs font-bold uppercase tracking-[0.14em] text-[#D6BB8F] transition-colors hover:text-[#FAF9F7] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D6BB8F] rounded-md ${sidebarCollapsed ? 'lg:justify-center lg:mt-0 lg:px-0' : 'mt-3 px-3 hover:bg-[#FAF9F7]/10'}`}>
+            <LogOut className="h-[18px] w-[18px] shrink-0" />
+            <span className={`overflow-hidden whitespace-nowrap transition-all duration-200 ease-out ${sidebarCollapsed ? 'lg:w-0 lg:opacity-0' : 'lg:w-[160px] lg:opacity-100'}`}>
+              Déconnexion
+            </span>
+          </button>
+        </div>
       </aside>
       <div className={`transition-[padding] duration-200 ease-out ${sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-64'}`}><header className="sticky top-0 z-30 flex min-h-16 items-center justify-between border-b border-[#002141]/10 bg-[#F5F3EF]/95 px-4 py-2 backdrop-blur sm:px-6"><div className="flex items-center gap-3"><button type="button" onClick={() => setSidebarOpen(true)} className="admin-icon-button lg:hidden" aria-label="Ouvrir le menu"><Menu className="h-5 w-5" /></button><button type="button" onClick={toggleSidebar} className="admin-icon-button hidden lg:inline-flex" aria-label={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'} title={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'}><PanelLeftOpen className={`h-5 w-5 transition-transform duration-200 ${sidebarCollapsed ? 'rotate-180' : ''}`} /></button><div><p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#AC854B]">Portail privé</p><p className="text-[13px] font-semibold text-[#002141]">{NAVIGATION.find((item) => item.id === activeTab)?.label}</p></div></div><button type="button" onClick={() => navigate('/')} className="admin-secondary-button hidden sm:inline-flex"><PanelLeftClose className="h-4 w-4" /> Voir la boutique</button></header>
         <main className="px-4 py-5 sm:px-6 lg:px-8">{loading ? <div className="flex min-h-80 items-center justify-center text-sm text-[#3A3A3A]"><LoaderCircle className="mr-3 h-5 w-5 animate-spin text-[#AC854B]" /> Chargement des données sécurisées…</div> : loadError ? <DataUnavailable message={loadError} /> : content}</main>
