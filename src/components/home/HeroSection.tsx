@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowRight, MessageCircle, Pause, Play } from 'lucide-react';
+import { ArrowRight, MessageCircle } from 'lucide-react';
 
 interface HeroSectionProps {
   navigate: (route: string) => void;
@@ -430,18 +430,6 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ navigate }) => {
           ))}
         </div>
 
-        {!prefersReducedMotion && (
-          <div className="absolute bottom-6 right-6 z-20 hidden md:block">
-            <button
-              type="button"
-              onClick={() => setIsPlaying((playing) => !playing)}
-              className="rounded-full border border-[#FAF9F7]/20 bg-[#002141]/60 p-2.5 text-[#FAF9F7] backdrop-blur-xs transition-colors hover:bg-[#002141]"
-              aria-label={isPlaying ? 'Mettre en pause la vidéo au défilement' : 'Reprendre la vidéo au défilement'}
-            >
-              {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-            </button>
-          </div>
-        )}
       </div>
     </section>
   );
