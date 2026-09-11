@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { BLOG_ARTICLES, BlogArticle } from '../../data/blog';
+import React, { useMemo, useState } from 'react';
+import { PublicBlogPost, usePublicContent } from '../../lib/public-content';
 import { ArrowRight, Clock, Tag } from 'lucide-react';
 
 interface BlogViewProps {
@@ -7,15 +7,16 @@ interface BlogViewProps {
 }
 
 export const BlogView: React.FC<BlogViewProps> = ({ navigate }) => {
-  const [selectedArticle, setSelectedArticle] = useState<BlogArticle | null>(null);
+  const { blogs } = usePublicContent();
+  const [selectedArticle, setSelectedArticle] = useState<PublicBlogPost | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('Tous');
 
-  const categories = ['Tous', 'Horlogerie', 'Haute Parfumerie', 'Lunetterie de Luxe'];
+  const categories = useMemo(() => ['Tous', ...Array.from(new Set(blogs.map((article) => article.category).filter(Boolean) as string[]))], [blogs]);
 
   const filteredArticles =
     selectedCategory === 'Tous'
-      ? BLOG_ARTICLES
-      : BLOG_ARTICLES.filter((art) => art.category === selectedCategory);
+      ? blogs
+      : blogs.filter((art) => art.category === selectedCategory);
 
   if (selectedArticle) {
     return (
@@ -46,15 +47,15 @@ export const BlogView: React.FC<BlogViewProps> = ({ navigate }) => {
             <div className="space-y-4">
               <div className="flex items-center gap-3 text-xs text-[#3A3A3A]/70">
                 <span className="font-bold uppercase tracking-wider text-[#AC854B]">
-                  {selectedArticle.category}
+                  {selectedArticle.category || 'Journal HERITAGE'}
                 </span>
                 <span>&middot;</span>
                 <span className="flex items-center gap-1">
                   <Clock className="w-3.5 h-3.5" />
-                  {selectedArticle.readingTime}
+                  {Math.max(1, Math.ceil(selectedArticle.content_html.replace(/<[^>]+>/g, '').trim().length / 900))} min de lecture
                 </span>
                 <span>&middot;</span>
-                <span>{selectedArticle.publishedAt}</span>
+                <span>{selectedArticle.published_at ? new Date(selectedArticle.published_at).toLocaleDateString('fr-FR') : ''}</span>
               </div>
 
               <h1 className="font-playfair text-3xl sm:text-4xl font-bold text-[#002141] leading-tight">
@@ -62,30 +63,19 @@ export const BlogView: React.FC<BlogViewProps> = ({ navigate }) => {
               </h1>
 
               <p className="font-playfair italic text-lg sm:text-xl text-[#002141]">
-                {selectedArticle.subtitle}
+                {selectedArticle.excerpt}
               </p>
             </div>
 
-            <div className="aspect-16/9 bg-[#002141] overflow-hidden">
+            {selectedArticle.cover && <div className="aspect-16/9 bg-[#002141] overflow-hidden">
               <img
-                src={selectedArticle.coverImage}
-                alt={selectedArticle.title}
+                src={selectedArticle.cover.public_url}
+                alt={selectedArticle.cover.alt_text || selectedArticle.title}
                 className="w-full h-full object-cover"
               />
-            </div>
+            </div>}
 
-            <div className="space-y-8 text-[#3A3A3A] leading-relaxed text-sm sm:text-base">
-              {selectedArticle.content.map((section, idx) => (
-                <div key={idx} className="space-y-4">
-                  <h2 className="font-playfair text-xl sm:text-2xl font-bold text-[#002141]">
-                    {section.heading}
-                  </h2>
-                  {section.paragraphs.map((p, pIdx) => (
-                    <p key={pIdx}>{p}</p>
-                  ))}
-                </div>
-              ))}
-            </div>
+            <div className="space-y-8 text-[#3A3A3A] leading-relaxed text-sm sm:text-base [&_h2]:font-playfair [&_h2]:text-xl [&_h2]:sm:text-2xl [&_h2]:font-bold [&_h2]:text-[#002141] [&_p]:mb-4 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: selectedArticle.content_html }} />
 
             <div className="pt-8 border-t border-[#002141]/10 flex flex-col sm:flex-row items-center justify-between gap-4">
               <button
@@ -171,28 +161,28 @@ export const BlogView: React.FC<BlogViewProps> = ({ navigate }) => {
               onClick={() => setSelectedArticle(art)}
             >
               <div className="aspect-16/10 bg-[#002141] overflow-hidden relative">
-                <img
-                  src={art.coverImage}
-                  alt={art.title}
+                {art.cover && <img
+                  src={art.cover?.public_url || ''}
+                  alt={art.cover?.alt_text || art.title}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                />
+                />}
                 <div className="absolute top-4 left-4 bg-[#002141]/90 text-[#FAF9F7] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider">
-                  {art.category}
+                  {art.category || 'Journal HERITAGE'}
                 </div>
               </div>
 
               <div className="p-6 sm:p-7 flex-1 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[#AC854B] mb-2">
-                    <span>{art.publishedAt}</span>
+                    <span>{art.published_at ? new Date(art.published_at).toLocaleDateString('fr-FR') : ''}</span>
                     <span>&middot;</span>
-                    <span>{art.readingTime}</span>
+                    <span>{Math.max(1, Math.ceil(art.content_html.replace(/<[^>]+>/g, '').trim().length / 900))} min</span>
                   </div>
                   <h2 className="font-playfair text-lg sm:text-xl font-bold text-[#002141] group-hover:text-[#AC854B] transition-colors mb-2 leading-snug">
                     {art.title}
                   </h2>
                   <p className="text-xs sm:text-sm text-[#3A3A3A] leading-relaxed line-clamp-3 mb-4">
-                    {art.summary}
+                    {art.excerpt}
                   </p>
                 </div>
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { BLOG_ARTICLES } from '../../data/blog';
+import { usePublicContent } from '../../lib/public-content';
 import { ArrowRight, BookOpen } from 'lucide-react';
 
 interface BlogSectionProps {
@@ -7,7 +7,9 @@ interface BlogSectionProps {
 }
 
 export const BlogSection: React.FC<BlogSectionProps> = ({ navigate }) => {
-  const article = BLOG_ARTICLES[0];
+  const { blogs } = usePublicContent();
+  const article = blogs[0];
+  if (!article) return null;
 
   return (
     <section className="py-20 md:py-28 bg-[#FAF9F7] border-b border-[#002141]/10">
@@ -27,21 +29,21 @@ export const BlogSection: React.FC<BlogSectionProps> = ({ navigate }) => {
         {/* Featured Editorial Card */}
         <div className="premium-section-card bg-white border border-[#002141]/10 overflow-hidden shadow-xs grid grid-cols-1 lg:grid-cols-12">
           <div className="lg:col-span-5 relative aspect-16/10 lg:aspect-auto overflow-hidden bg-[#002141]">
-            <img
-              src={article.coverImage}
-              alt={article.title}
+            {article.cover && <img
+              src={article.cover?.public_url || ''}
+              alt={article.cover?.alt_text || article.title}
               className="w-full h-full object-cover opacity-90 hover:scale-105 transition-transform duration-500"
-            />
+            />}
           </div>
 
           <div className="lg:col-span-7 p-8 md:p-12 flex flex-col justify-between">
             <div>
               <div className="flex items-center gap-3 text-xs text-[#3A3A3A]/70 mb-4">
                 <span className="font-bold uppercase tracking-wider text-[#AC854B]">
-                  {article.category}
+                  {article.category || 'Journal HERITAGE'}
                 </span>
                 <span>&middot;</span>
-                <span>{article.readingTime}</span>
+                <span>{Math.max(1, Math.ceil(article.content_html.replace(/<[^>]+>/g, '').trim().length / 900))} min de lecture</span>
               </div>
 
               <h3 className="font-playfair text-2xl sm:text-3xl font-bold text-[#002141] mb-3">
@@ -49,11 +51,11 @@ export const BlogSection: React.FC<BlogSectionProps> = ({ navigate }) => {
               </h3>
 
               <p className="font-medium text-sm text-[#002141] mb-4">
-                {article.subtitle}
+                {article.excerpt}
               </p>
 
               <p className="text-xs sm:text-sm text-[#3A3A3A] leading-relaxed line-clamp-3">
-                {article.summary}
+                {article.excerpt}
               </p>
             </div>
 

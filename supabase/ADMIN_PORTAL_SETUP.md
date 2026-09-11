@@ -1,16 +1,12 @@
-# Portail d’administration HERITAGE — mise en service Supabase
+# Mise en service Supabase — CMS HERITAGE
 
-Ce guide est la procédure de mise en service du portail. Exécutez **uniquement** la migration `migrations/20260910_admin_portal.sql` : l’ancien fichier `schema.sql` est un bootstrap historique et ne doit pas être relancé après cette migration.
+Cette procédure met en service le portail, le catalogue, le journal et les contenus publics depuis une source unique : Supabase. Faites les étapes dans cet ordre.
 
-## 1. Révoquer la clé exposée auparavant
+## 1. Sécuriser les clés
 
-Une clé `service_role` figurait dans une version précédente du serveur. Dans Supabase : **Project Settings → API → Reset service_role key**, révoquez-la avant toute mise en production.
+Dans **Supabase → Project Settings → API**, réinitialisez toute ancienne clé `service_role` qui aurait pu être partagée. Ne mettez jamais une clé `service_role` dans Git, une variable `VITE_*` ou le navigateur.
 
-Ne mettez jamais cette clé dans une variable `VITE_*`, dans Git ou dans le navigateur.
-
-## 2. Configurer les variables locales et de déploiement
-
-Copiez `.env.example` vers `.env`, puis renseignez :
+Dans Hostinger (variables de l'application Node.js), vérifiez ces quatre variables, puis redémarrez/redéployez l'application :
 
 ```dotenv
 SUPABASE_URL=https://VOTRE_PROJECT_REF.supabase.co
@@ -19,29 +15,37 @@ VITE_SUPABASE_URL=https://VOTRE_PROJECT_REF.supabase.co
 VITE_SUPABASE_ANON_KEY=VOTRE_CLE_ANON_PUBLIQUE
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY` est une variable serveur uniquement. Sur l’hébergeur, ajoutez les quatre variables dans les secrets/environnements du service Node avant de redémarrer l’application.
+`SUPABASE_SERVICE_ROLE_KEY` est uniquement lue par `server.ts`. Elle ne doit pas commencer par `VITE_`.
 
-## 3. Exécuter le SQL principal
+## 2. Exécuter les migrations SQL
 
-Dans **Supabase Dashboard → SQL Editor → New query**, copiez-collez puis exécutez entièrement :
+Dans **Supabase → SQL Editor → New query**, copiez-collez et exécutez entièrement, une par une, dans cet ordre :
 
-[`migrations/20260910_admin_portal.sql`](./migrations/20260910_admin_portal.sql)
+1. [`migrations/20260910_admin_portal.sql`](./migrations/20260910_admin_portal.sql)
+2. [`migrations/20260911_cms_completion.sql`](./migrations/20260911_cms_completion.sql)
 
-Cette migration crée et protège les profils, catalogue enrichi, variantes, médias, avis, blogs, F.A.Q., pages légales, métadonnées, coordonnées, pixels, codes d’invitation, journal d’audit et le bucket `heritage-media`.
+La première crée également le bucket Storage public `heritage-media`, limité à 10 Mo et aux fichiers JPEG/PNG/WebP/AVIF. Vérifiez dans **Storage** que le bucket existe et qu'il est public. Les envois restent protégés par le serveur administrateur ; aucun accès d'écriture navigateur n'est créé.
 
-## 4. Créer le premier administrateur
+## 3. Reprendre le catalogue et les articles historiques
 
-1. Dans **Authentication → Users → Add user**, créez le premier compte avec son adresse et un mot de passe fort. Activez la confirmation e-mail immédiate si l’option est proposée.
-2. Exécutez ensuite ce SQL, en remplaçant l’adresse :
+Depuis le terminal à la racine du projet, générez le SQL de reprise :
+
+```powershell
+npx tsx supabase/generate_legacy_seed.ts > supabase/20260911_legacy_seed.sql
+```
+
+Ouvrez ensuite `supabase/20260911_legacy_seed.sql`, copiez son contenu dans le SQL Editor Supabase et exécutez-le.
+
+Ce script reprend produits, prix publics, stocks, images publiques, caractéristiques, FAQ produit, articles et les coordonnées provenant de l'ancienne page Contact. Les champs **provenance**, **garantie**, **livraison**, réseaux sociaux et notices du footer sont volontairement laissés vides : ils doivent être validés puis renseignés dans le portail avant toute publication.
+
+## 4. Premier administrateur
+
+1. Dans **Authentication → Users → Add user**, créez le premier compte avec son e-mail et un mot de passe robuste.
+2. Dans SQL Editor, remplacez l'e-mail puis exécutez :
 
 ```sql
 insert into public.profiles (id, email, full_name, role, is_active)
-select
-  id,
-  email,
-  coalesce(raw_user_meta_data ->> 'full_name', ''),
-  'admin',
-  true
+select id, email, coalesce(raw_user_meta_data ->> 'full_name', ''), 'admin', true
 from auth.users
 where lower(email) = lower('admin@votre-domaine.com')
 on conflict (id) do update
@@ -51,58 +55,53 @@ set email = excluded.email,
     is_active = true;
 ```
 
-3. Contrôlez le résultat :
+3. Contrôlez le rôle :
 
 ```sql
-select email, full_name, role, is_active, created_at
+select email, full_name, role, is_active
 from public.profiles
 where lower(email) = lower('admin@votre-domaine.com');
 ```
 
-## 5. Recréer les profils d’utilisateurs existants si nécessaire
+Le compte peut ensuite se connecter sur `/admin/login`. Les comptes suivants sont créés uniquement via un code d'invitation d'une heure depuis **Administrateurs**.
 
-À exécuter une seule fois si des utilisateurs existaient déjà dans **Authentication** mais n’apparaissent pas dans `public.profiles` :
+## 5. Réglages Auth Supabase
 
-```sql
-insert into public.profiles (id, email, full_name, role, is_active)
-select
-  id,
-  email,
-  coalesce(raw_user_meta_data ->> 'full_name', ''),
-  'customer',
-  true
-from auth.users
-on conflict (id) do update
-set email = excluded.email,
-    full_name = coalesce(nullif(excluded.full_name, ''), public.profiles.full_name);
+Dans **Authentication → Providers**, activez Email. Dans **Authentication → URL Configuration**, définissez l'URL de production et ajoutez-la aux Redirect URLs :
+
+```text
+https://navajowhite-okapi-833640.hostingersite.com
 ```
 
-## 6. Réglages Auth à confirmer dans Supabase
+Ajoutez aussi l'URL locale si vous testez sur votre PC :
 
-- **Authentication → Providers** : activez Email.
-- **Authentication → URL Configuration** : ajoutez `http://localhost:3000` pour le développement et l’URL HTTPS finale du site dans **Site URL** et les **Redirect URLs** autorisées.
-- Conservez la confirmation e-mail pour les comptes clients si vous l’utilisez. Les comptes administrateurs créés avec un code sont confirmés par le serveur seulement après validation du code.
-- Configurez une longueur minimale de mot de passe d’au moins 12 caractères dans les réglages Auth si votre projet propose ce paramètre. Le formulaire admin l’impose déjà.
-
-## 7. Démarrage et contrôle
-
-```powershell
-npm run dev
+```text
+http://localhost:3000
 ```
 
-Puis ouvrez :
+Conservez une longueur minimale de mot de passe de 12 caractères ou davantage. Le formulaire des administrateurs impose déjà 12 caractères.
 
-- Connexion : `http://localhost:3000/admin/login`
-- Création d’un admin avec code : `http://localhost:3000/admin/create`
+## 6. Données à renseigner dans le portail
 
-Après connexion avec le premier administrateur :
+Après connexion, complétez d'abord :
 
-1. Ouvrez **Administrateurs** et générez un code.
-2. Transmettez ce code au membre du personnel par un canal privé.
-3. Il crée son compte sur `/admin/create` avec un mot de passe de 12 caractères minimum.
-4. Le code est haché en base, est utilisable une seule fois et expire au plus tard une heure après sa création.
-5. Désactivez un compte de test : sa session est refusée par le portail et son utilisateur Auth est banni jusqu’à réactivation.
+1. **Coordonnées** : téléphone, WhatsApp, e-mail, adresse, horaires et réseaux sociaux. Les trois notices du footer restent vides tant qu'elles ne sont pas validées.
+2. **Produits / Stocks** : renseignez notamment le prix d'achat, les médias avec alt text, et toute information de garantie/provenance/livraison validée. Une publication exige nom, catégorie, prix normal et image principale non-IA avec texte alternatif.
+3. **Pages légales** : rédigez-les et publiez-les seulement après validation juridique. Elles sont en brouillon par défaut.
+4. **Pixels** : entrez seulement un ID Meta/Google réel. Le site affiche un choix de consentement avant tout chargement.
 
-## Limites de périmètre
+Les mises à jour se reflètent sur le site public au prochain chargement et au plus tard dans la minute grâce au rafraîchissement de contenu.
 
-Le portail gère déjà les données Supabase de toutes les interfaces demandées. Les contenus éditoriaux créés dans le portail (blogs, avis, F.A.Q., légales, coordonnées, métadonnées et pixels) ne sont pas encore rendus dynamiquement dans les pages publiques : cette connexion du front public serait une tâche distincte, volontairement non modifiée ici.
+## 7. Contrôle après déploiement Hostinger
+
+Dans la configuration Node.js Hostinger, conservez **Node 22.x**, la commande de build `npm run build` et le fichier d’entrée `dist/server.cjs` (ou la commande de démarrage `npm run start` si Hostinger demande une commande). Ne définissez pas manuellement `PORT` : le serveur utilise automatiquement `process.env.PORT` fourni par Hostinger.
+
+Après `git push hostinger main`, attendez le déploiement puis testez :
+
+- `https://navajowhite-okapi-833640.hostingersite.com/api/health` doit retourner `status: ok`.
+- `https://navajowhite-okapi-833640.hostingersite.com/admin/login` doit afficher la connexion HERITAGE.
+- Connectez-vous, ajoutez un brouillon produit, puis vérifiez qu'il n'est pas visible sur le catalogue public.
+- Publiez le produit avec ses champs requis et contrôlez sa visibilité.
+- Créez un FAQ, un avis validé, un article ou une coordonnée et vérifiez la synchronisation de l'emplacement public correspondant.
+
+Le portail ne révèle jamais la clé serveur, les informations bancaires des clients ou le contenu de WhatsApp.

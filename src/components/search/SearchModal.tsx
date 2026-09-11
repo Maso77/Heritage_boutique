@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { getPublishedProducts, formatXOF } from '../../data/products';
+import { usePublicContent, xof as formatXOF } from '../../lib/public-content';
 import { Search, X, ArrowRight } from 'lucide-react';
 import { Product } from '../../types';
 
@@ -16,6 +16,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
   navigate,
 }) => {
   const { isSearchOpen: storeIsOpen, setIsSearchOpen } = useStore();
+  const { products } = usePublicContent();
   const isSearchOpen = propIsOpen !== undefined ? propIsOpen : storeIsOpen;
 
   const handleClose = () => {
@@ -50,8 +51,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
   const results: Product[] = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
     if (!trimmed) return [];
-    const published = getPublishedProducts();
-    return published.filter((p) => {
+    return products.filter((p) => {
       return (
         p.name.toLowerCase().includes(trimmed) ||
         p.reference.toLowerCase().includes(trimmed) ||
@@ -61,7 +61,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
         (p.attributes.boitier && p.attributes.boitier.toLowerCase().includes(trimmed))
       );
     });
-  }, [query]);
+  }, [query, products]);
 
   if (!isSearchOpen) return null;
 

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { CartItem, Order, OrderCustomer, OrderStatus, Product } from '../types';
-import { PRODUCTS } from '../data/products';
 import { supabase, syncOrderToSupabase, updateOrderStatusInSupabase, fetchUserOrdersFromSupabase } from '../lib/supabase';
+import { usePublicContent } from '../lib/public-content';
 
 interface StoreContextType {
   cart: CartItem[];
@@ -45,15 +45,14 @@ const USER_STORAGE_KEY = 'heritage_user_v1';
 const WISHLIST_STORAGE_KEY = 'heritage_wishlist_v1';
 
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { products } = usePublicContent();
   const [cart, setCart] = useState<CartItem[]>(() => {
     try {
       const saved = localStorage.getItem(CART_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         // Validate with current products
-        return parsed.filter((item: CartItem) =>
-          PRODUCTS.some((p) => p.sku === item.product.sku && p.status === 'published')
-        );
+        return parsed;
       }
     } catch {
       // Fallback
@@ -89,7 +88,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter((id: string) => PRODUCTS.some((p) => p.id === id));
+          return parsed;
         }
       }
     } catch {
@@ -105,6 +104,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // Ignore
     }
   }, [wishlist]);
+
+  // The published Supabase catalogue is the source of truth for persisted cart
+  // and wishlist entries once it has loaded.
+  useEffect(() => {
+    if (!products.length) return;
+    setCart((current) => current.filter((item) => products.some((product) => product.sku === item.product.sku && product.status === 'published')));
+    setWishlist((current) => current.filter((id) => products.some((product) => product.id === id)));
+  }, [products]);
 
   useEffect(() => {
     try {
@@ -330,7 +337,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const removeFromWishlist = (productId: string) => {
     setWishlist((prev) => {
-      const targetProduct = PRODUCTS.find((p) => p.id === productId);
+      const targetProduct = products.find((p) => p.id === productId);
       if (targetProduct) {
         setCartToast(`« ${targetProduct.name} » a été retiré de votre liste d'envies.`);
         setTimeout(() => setCartToast(null), 3500);

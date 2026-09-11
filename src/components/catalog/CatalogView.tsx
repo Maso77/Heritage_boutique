@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { getPublishedProducts, formatXOF } from '../../data/products';
+import { usePublicContent, xof as formatXOF } from '../../lib/public-content';
+import { PublicFeedbackSections } from '../common/PublicFeedbackSections';
 import { ProductCard } from './ProductCard';
 import { FilterState, Product } from '../../types';
 import {
@@ -35,7 +36,7 @@ const CATEGORY_NAMES: Record<string, string> = {
 };
 
 export const CatalogView: React.FC<CatalogViewProps> = ({ navigate, initialBrand }) => {
-  const publishedProducts = getPublishedProducts();
+  const { products: publishedProducts } = usePublicContent();
 
   // Bornes dynamiques du catalogue
   const { minCatalogPrice, maxCatalogPrice } = useMemo(() => {
@@ -67,8 +68,8 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ navigate, initialBrand
 
   // Facet options derived from actual published products
   const facetOptions = useMemo(() => {
-    const brands = Array.from(new Set(publishedProducts.map((p) => p.brand)));
-    const categories = Array.from(new Set(publishedProducts.map((p) => p.category || 'montres')));
+    const brands = Array.from(new Set(publishedProducts.map((p) => p.brand))) as string[];
+    const categories = Array.from(new Set(publishedProducts.map((p) => p.category || 'montres'))) as string[];
     const movements = Array.from(
       new Set(
         publishedProducts
@@ -884,6 +885,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ navigate, initialBrand
             <span>ÉCHANGER AVEC UN CONSEILLER</span>
           </a>
         </div>
+        <PublicFeedbackSections placement="catalog" />
       </div>
 
       {/* Mobile Filters Drawer */}

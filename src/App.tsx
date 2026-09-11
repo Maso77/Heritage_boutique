@@ -17,6 +17,10 @@ import { MethodSection } from './components/home/MethodSection';
 import { BlogSection } from './components/home/BlogSection';
 import { LocalAdvice } from './components/home/LocalAdvice';
 import { ScrollFadeSection } from './components/common/ScrollFadeSection';
+import { PublicFeedbackSections } from './components/common/PublicFeedbackSections';
+import { TrackingPixels } from './components/common/TrackingPixels';
+import { StructuredData } from './components/common/StructuredData';
+import { TrackingConsent } from './components/common/TrackingConsent';
 
 // App pages
 import { CatalogView } from './components/catalog/CatalogView';
@@ -29,12 +33,10 @@ import { AccountView } from './components/account/AccountView';
 import { AdminPortalView } from './components/admin/AdminPortalView';
 import { AdminAuthView } from './components/admin/AdminAuthView';
 import { AboutView } from './components/pages/AboutView';
-import { AuthenticityView } from './components/pages/AuthenticityView';
 import { BlogView } from './components/pages/BlogView';
 import { ContactView } from './components/pages/ContactView';
 import { LegalView } from './components/pages/LegalView';
-
-import { getProductBySlug } from './data/products';
+import { PublicContentProvider, usePublicContent, usePublicPageMeta } from './lib/public-content';
 
 function AppContent() {
   const [currentRoute, setCurrentRoute] = useState<string>(() => {
@@ -42,6 +44,14 @@ function AppContent() {
   });
 
   const { isSearchOpen, setIsSearchOpen, isCartOpen, setIsCartOpen, cartToast } = useStore();
+  const { products } = usePublicContent();
+
+  const pageKey = currentRoute === '/' ? 'accueil'
+    : currentRoute === '/montres' || currentRoute === '/boutique' ? 'montres'
+      : currentRoute === '/blogs' || currentRoute === '/blog' ? 'blog'
+        : currentRoute === '/contact' ? 'contact'
+          : currentRoute.replace(/^\//, '') || 'accueil';
+  usePublicPageMeta(pageKey);
 
   // Sync route with browser history
   useEffect(() => {
@@ -112,6 +122,8 @@ function AppContent() {
           <ScrollFadeSection>
             <LocalAdvice navigate={navigate} />
           </ScrollFadeSection>
+
+          <PublicFeedbackSections placement="home" />
         </main>
       );
     }
@@ -126,7 +138,7 @@ function AppContent() {
 
     if (currentRoute && currentRoute.startsWith('/montres/')) {
       const slug = currentRoute.replace('/montres/', '');
-      const product = getProductBySlug(slug);
+      const product = products.find((item) => item.slug === slug);
       if (product) {
         return <ProductDetailView product={product} navigate={navigate} />;
       }
@@ -192,7 +204,7 @@ function AppContent() {
     }
 
     if (currentRoute === '/authenticite-provenance') {
-      return <AuthenticityView navigate={navigate} />;
+      return <LegalView type="authenticite-provenance" navigate={navigate} />;
     }
 
     if (currentRoute === '/blogs' || currentRoute === '/blog') {
@@ -213,6 +225,14 @@ function AppContent() {
 
     if (currentRoute === '/confidentialite') {
       return <LegalView type="confidentialite" navigate={navigate} />;
+    }
+
+    if (currentRoute === '/livraison-retours') {
+      return <LegalView type="livraison-retours" navigate={navigate} />;
+    }
+
+    if (currentRoute === '/garantie-service') {
+      return <LegalView type="garantie-service" navigate={navigate} />;
     }
 
     // Default 404 fallback
@@ -273,6 +293,9 @@ function AppContent() {
 
       {/* Persistent Floating WhatsApp Advisor (Masqué sur le portail administration) */}
       {!isAdmin && <WhatsAppButton currentRoute={currentRoute} />}
+      {!isAdmin && <TrackingPixels />}
+      {!isAdmin && <StructuredData />}
+      {!isAdmin && <TrackingConsent />}
 
       {/* Cart Notification Toast */}
       {cartToast && (
@@ -290,8 +313,10 @@ function AppContent() {
 
 export default function App() {
   return (
-    <StoreProvider>
-      <AppContent />
-    </StoreProvider>
+    <PublicContentProvider>
+      <StoreProvider>
+        <AppContent />
+      </StoreProvider>
+    </PublicContentProvider>
   );
 }

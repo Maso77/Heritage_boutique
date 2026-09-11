@@ -16,6 +16,7 @@ import {
   MessageSquareText,
   PackagePlus,
   PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Plus,
   RefreshCw,
@@ -27,7 +28,7 @@ import {
   UsersRound,
   X
 } from 'lucide-react';
-import { adminRequest, AdminSession, getAdminSession, signOutAdministrator } from '../../lib/admin-api';
+import { adminRequest, AdminSession, downloadAdminCsv, getAdminSession, signOutAdministrator } from '../../lib/admin-api';
 import { RichTextEditor } from './RichTextEditor';
 
 interface AdminPortalViewProps {
@@ -87,6 +88,7 @@ const emptyProduct = (): AnyRecord => ({
   attributes: '{}',
   faq: '[]',
   variants: '[]',
+  media_ids: [],
   seo_title: '',
   seo_description: ''
 });
@@ -108,7 +110,8 @@ const toProductForm = (product: AnyRecord): AnyRecord => ({
   colors: toJsonText(product.colors),
   attributes: toJsonText(product.attributes, '{}'),
   faq: toJsonText(product.faq),
-  variants: toJsonText(product.product_variants || product.variants)
+  variants: toJsonText(product.product_variants || product.variants),
+  media_ids: (product.media_assets || []).map((asset: AnyRecord) => asset.id)
 });
 
 const statusLabel: Record<string, string> = {
@@ -126,7 +129,7 @@ const statusLabel: Record<string, string> = {
 interface ResourceField {
   name: string;
   label: string;
-  type?: 'text' | 'textarea' | 'select' | 'checkbox' | 'rich';
+  type?: 'text' | 'textarea' | 'select' | 'checkbox' | 'rich' | 'datetime-local' | 'multi';
   options?: Array<{ value: string; label: string }>;
   placeholder?: string;
   required?: boolean;
@@ -152,7 +155,12 @@ const RESOURCE_CONFIGS: Record<'reviews' | 'blogs' | 'faqs' | 'legal' | 'meta' |
       { name: 'rating', label: 'Note', type: 'select', options: [1, 2, 3, 4, 5].map((value) => ({ value: String(value), label: `${value} / 5` })) },
       { name: 'title', label: 'Titre de l’avis' },
       { name: 'body', label: 'Contenu', type: 'textarea', required: true },
-      { name: 'status', label: 'Statut', type: 'select', options: ['pending', 'approved', 'rejected'].map((value) => ({ value, label: value === 'pending' ? 'En attente' : value === 'approved' ? 'Approuvé' : 'Refusé' })) }
+      { name: 'status', label: 'Statut', type: 'select', options: ['pending', 'approved', 'rejected'].map((value) => ({ value, label: value === 'pending' ? 'En attente' : value === 'approved' ? 'Approuvé' : 'Refusé' })) },
+      { name: 'verified_purchase', label: 'Commande vérifiée', type: 'checkbox' },
+      { name: 'manually_validated', label: 'Validation manuelle', type: 'checkbox' },
+      { name: 'is_featured_home', label: 'Mettre en avant sur l’accueil', type: 'checkbox' },
+      { name: 'is_featured_contact', label: 'Mettre en avant sur Contact', type: 'checkbox' },
+      { name: 'merchant_response', label: 'Réponse de la boutique', type: 'textarea' }
     ],
     summary: (item) => `${item.rating || 0}/5 · ${item.author_name || 'Client'} · ${item.status || 'pending'}`
   },
@@ -166,7 +174,12 @@ const RESOURCE_CONFIGS: Record<'reviews' | 'blogs' | 'faqs' | 'legal' | 'meta' |
       { name: 'excerpt', label: 'Extrait', type: 'textarea' },
       { name: 'content_html', label: 'Article', type: 'rich', required: true },
       { name: 'cover_media_id', label: 'Identifiant du média de couverture' },
-      { name: 'status', label: 'Publication', type: 'select', options: ['draft', 'published', 'archived'].map((value) => ({ value, label: value === 'draft' ? 'Brouillon' : value === 'published' ? 'Publié' : 'Archivé' })) },
+      { name: 'cover_image', label: 'URL de couverture existante (optionnel)' },
+      { name: 'category', label: 'Catégorie éditoriale' },
+      { name: 'tags', label: 'Tags (JSON)', type: 'textarea', placeholder: '["horlogerie", "guide"]' },
+      { name: 'related_product_ids', label: 'Produits liés (JSON)', type: 'textarea', placeholder: '["id-produit"]' },
+      { name: 'status', label: 'Publication', type: 'select', options: ['draft', 'scheduled', 'published', 'archived'].map((value) => ({ value, label: value === 'draft' ? 'Brouillon' : value === 'scheduled' ? 'Programmé' : value === 'published' ? 'Publié' : 'Archivé' })) },
+      { name: 'published_at', label: 'Date de publication / programmation', type: 'datetime-local' },
       { name: 'seo_title', label: 'Titre SEO' },
       { name: 'seo_description', label: 'Description SEO', type: 'textarea' }
     ],
@@ -177,7 +190,8 @@ const RESOURCE_CONFIGS: Record<'reviews' | 'blogs' | 'faqs' | 'legal' | 'meta' |
     title: 'Foire aux questions',
     description: 'Organisez les réponses visibles sur l’accueil, le catalogue et la page contact.',
     fields: [
-      { name: 'placement', label: 'Emplacement', type: 'select', options: [{ value: 'all', label: 'Toutes les pages prévues' }, { value: 'home', label: 'Accueil' }, { value: 'catalog', label: 'Boutique / catalogue' }, { value: 'contact', label: 'Contact' }] },
+      { name: 'placements', label: 'Emplacements', type: 'multi', options: [{ value: 'home', label: 'Accueil' }, { value: 'catalog', label: 'Boutique / catalogue' }, { value: 'contact', label: 'Contact' }] },
+      { name: 'category', label: 'Catégorie' },
       { name: 'question', label: 'Question', required: true },
       { name: 'answer_html', label: 'Réponse', type: 'rich', required: true },
       { name: 'sort_order', label: 'Ordre', type: 'text' },
@@ -190,9 +204,10 @@ const RESOURCE_CONFIGS: Record<'reviews' | 'blogs' | 'faqs' | 'legal' | 'meta' |
     title: 'Pages légales',
     description: 'Modifiez les pages légales avec un éditeur riche complet.',
     fields: [
-      { name: 'page_key', label: 'Page', type: 'select', options: [{ value: 'mentions-legales', label: 'Mentions légales' }, { value: 'cgv', label: 'Conditions générales de vente' }, { value: 'confidentialite', label: 'Confidentialité' }, { value: 'livraison-retours', label: 'Livraison et retours' }, { value: 'cookies', label: 'Cookies' }] },
+      { name: 'page_key', label: 'Page', type: 'select', options: [{ value: 'mentions-legales', label: 'Mentions légales' }, { value: 'cgv', label: 'Conditions générales de vente' }, { value: 'confidentialite', label: 'Confidentialité' }, { value: 'livraison-retours', label: 'Livraison et retours' }, { value: 'garantie-service', label: 'Garantie et service' }, { value: 'authenticite-provenance', label: 'Authenticité et provenance' }, { value: 'cookies', label: 'Cookies' }] },
       { name: 'title', label: 'Titre', required: true },
-      { name: 'content_html', label: 'Contenu', type: 'rich', required: true }
+      { name: 'content_html', label: 'Contenu', type: 'rich', required: true },
+      { name: 'status', label: 'Statut', type: 'select', options: [{ value: 'draft', label: 'Brouillon — non visible' }, { value: 'published', label: 'Publié' }] }
     ],
     summary: (item) => item.page_key || 'Page légale'
   },
@@ -201,11 +216,12 @@ const RESOURCE_CONFIGS: Record<'reviews' | 'blogs' | 'faqs' | 'legal' | 'meta' |
     title: 'Méta description',
     description: 'Gérez les balises de chaque page éditoriale, hors fiches produit.',
     fields: [
-      { name: 'page_key', label: 'Route ou identifiant de page', placeholder: 'accueil', required: true },
+      { name: 'page_key', label: 'Page', type: 'select', required: true, options: [{ value: 'accueil', label: 'Accueil' }, { value: 'montres', label: 'Montres' }, { value: 'parfums', label: 'Parfums' }, { value: 'lunettes', label: 'Lunettes' }, { value: 'a-propos', label: 'À propos' }, { value: 'contact', label: 'Contact' }, { value: 'blog', label: 'Journal / Blog' }, { value: 'authenticite-provenance', label: 'Authenticité / provenance' }, { value: 'livraison-retours', label: 'Livraison / retours' }, { value: 'garantie-service', label: 'Garantie / service' }, { value: 'mentions-legales', label: 'Mentions légales' }, { value: 'cgv', label: 'CGV' }, { value: 'confidentialite', label: 'Confidentialité' }, { value: 'cookies', label: 'Cookies' }] },
       { name: 'title', label: 'Titre de la page', required: true },
       { name: 'description', label: 'Description, 160 caractères conseillés', type: 'textarea', required: true },
       { name: 'og_title', label: 'Titre de partage' },
       { name: 'og_description', label: 'Description de partage', type: 'textarea' },
+      { name: 'og_media_id', label: 'Identifiant de l’image OG' },
       { name: 'no_index', label: 'Empêcher l’indexation', type: 'checkbox' }
     ],
     summary: (item) => item.page_key || 'Page'
@@ -213,12 +229,13 @@ const RESOURCE_CONFIGS: Record<'reviews' | 'blogs' | 'faqs' | 'legal' | 'meta' |
   pixels: {
     key: 'pixels',
     title: 'Pixels et tracking',
-    description: 'Centralisez les identifiants Meta, Google Ads, Analytics et les scripts autorisés.',
+    description: 'Centralisez les identifiants Meta, Google Ads et Analytics. Aucun script arbitraire ne peut être injecté auprès des visiteurs.',
     fields: [
-      { name: 'provider', label: 'Plateforme', type: 'select', options: [{ value: 'meta', label: 'Meta Pixel' }, { value: 'google_ads', label: 'Google Ads' }, { value: 'google_analytics', label: 'Google Analytics' }, { value: 'custom', label: 'Script personnalisé' }] },
+      { name: 'provider', label: 'Plateforme', type: 'select', options: [{ value: 'meta', label: 'Meta Pixel' }, { value: 'google_ads', label: 'Google Ads' }, { value: 'google_analytics', label: 'Google Analytics' }] },
       { name: 'label', label: 'Nom interne', required: true },
       { name: 'pixel_id', label: 'Identifiant du pixel' },
-      { name: 'script_code', label: 'Script de tracking', type: 'textarea' },
+      { name: 'requires_consent', label: 'Exiger le consentement', type: 'checkbox' },
+      { name: 'is_test', label: 'Mode test (non injecté en production)', type: 'checkbox' },
       { name: 'is_active', label: 'Actif', type: 'checkbox' }
     ],
     summary: (item) => `${item.provider || 'custom'} · ${item.is_active ? 'Actif' : 'Inactif'}`
@@ -247,6 +264,29 @@ function EmptyState({ title, body }: { title: string; body: string }) {
   );
 }
 
+const readArray = (value: unknown): AnyRecord[] => {
+  try { const parsed = typeof value === 'string' ? JSON.parse(value || '[]') : value; return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+};
+
+const readObject = (value: unknown): Record<string, string> => {
+  try { const parsed = typeof value === 'string' ? JSON.parse(value || '{}') : value; return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? Object.fromEntries(Object.entries(parsed).map(([key, item]) => [key, String(item ?? '')])) : {}; } catch { return {}; }
+};
+
+function ProductStructuredFields({ form, onChange }: { form: AnyRecord; onChange: (field: string, value: string) => void }) {
+  const colors = readArray(form.colors).map(String);
+  const attributes = Object.entries(readObject(form.attributes));
+  const variants = readArray(form.variants);
+  const faqs = readArray(form.faq);
+  const saveAttributes = (entries: Array<[string, string]>) => onChange('attributes', JSON.stringify(Object.fromEntries(entries.filter(([key]) => key.trim()))));
+
+  return <div className="md:col-span-2 xl:col-span-3 space-y-6">
+    <fieldset className="border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Couleurs</legend><input value={colors.join(', ')} onChange={(event) => onChange('colors', JSON.stringify(event.target.value.split(',').map((value) => value.trim()).filter(Boolean)))} className="admin-input mt-2" placeholder="Acier, Bleu, Or…" /></fieldset>
+    <fieldset className="border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Caractéristiques techniques</legend><p className="mt-1 text-xs text-[#3A3A3A]">Exemples : diamètre, boîtier, verre, mouvement, réserve de marche, bracelet, étanchéité, fond de boîte.</p><div className="mt-3 space-y-2">{attributes.map(([key, value], index) => <div key={`${key}-${index}`} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]"><input value={key} onChange={(event) => { const next = [...attributes]; next[index] = [event.target.value, value]; saveAttributes(next); }} className="admin-input" placeholder="Caractéristique" /><input value={value} onChange={(event) => { const next = [...attributes]; next[index] = [key, event.target.value]; saveAttributes(next); }} className="admin-input" placeholder="Valeur" /><button type="button" onClick={() => saveAttributes(attributes.filter((_, current) => current !== index))} className="admin-icon-button text-red-800" aria-label="Supprimer la caractéristique"><Trash2 className="h-4 w-4" /></button></div>)}</div><button type="button" onClick={() => saveAttributes([...attributes, ['', '']])} className="admin-secondary-button mt-3">Ajouter une caractéristique</button></fieldset>
+    <fieldset className="border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Variantes</legend><div className="mt-3 space-y-3">{variants.map((variant, index) => <div key={index} className="grid gap-2 border border-[#002141]/10 p-3 sm:grid-cols-4"><input value={variant.name || ''} onChange={(event) => { const next = [...variants]; next[index] = { ...variant, name: event.target.value }; onChange('variants', JSON.stringify(next)); }} className="admin-input" placeholder="Nom (ex. 40 mm)" /><input value={variant.sku || ''} onChange={(event) => { const next = [...variants]; next[index] = { ...variant, sku: event.target.value }; onChange('variants', JSON.stringify(next)); }} className="admin-input" placeholder="SKU" /><input type="number" value={variant.stock_quantity ?? 0} onChange={(event) => { const next = [...variants]; next[index] = { ...variant, stock_quantity: Number(event.target.value) }; onChange('variants', JSON.stringify(next)); }} className="admin-input" placeholder="Stock" /><div className="flex gap-2"><input type="number" value={variant.sale_price_xof ?? ''} onChange={(event) => { const next = [...variants]; next[index] = { ...variant, sale_price_xof: event.target.value }; onChange('variants', JSON.stringify(next)); }} className="admin-input" placeholder="Prix FCFA" /><button type="button" onClick={() => onChange('variants', JSON.stringify(variants.filter((_, current) => current !== index)))} className="admin-icon-button text-red-800" aria-label="Supprimer la variante"><Trash2 className="h-4 w-4" /></button></div></div>)}</div><button type="button" onClick={() => onChange('variants', JSON.stringify([...variants, { name: '', sku: '', stock_quantity: 0, sale_price_xof: '', options: {}, is_active: true }]))} className="admin-secondary-button mt-3">Ajouter une variante</button></fieldset>
+    <fieldset className="border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">F.A.Q. de ce produit uniquement</legend><div className="mt-3 space-y-3">{faqs.map((faq, index) => <div key={index} className="space-y-2 border border-[#002141]/10 p-3"><input value={faq.question || ''} onChange={(event) => { const next = [...faqs]; next[index] = { ...faq, question: event.target.value }; onChange('faq', JSON.stringify(next)); }} className="admin-input" placeholder="Question" /><textarea value={faq.answer || ''} onChange={(event) => { const next = [...faqs]; next[index] = { ...faq, answer: event.target.value }; onChange('faq', JSON.stringify(next)); }} className="admin-input min-h-20" placeholder="Réponse" /><button type="button" onClick={() => onChange('faq', JSON.stringify(faqs.filter((_, current) => current !== index)))} className="text-xs font-semibold text-red-800">Supprimer</button></div>)}</div><button type="button" onClick={() => onChange('faq', JSON.stringify([...faqs, { question: '', answer: '' }]))} className="admin-secondary-button mt-3">Ajouter une question</button></fieldset>
+  </div>;
+}
+
 function ResourceManager({
   config,
   items,
@@ -261,11 +301,18 @@ function ResourceManager({
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [form, setForm] = useState<AnyRecord>({});
   const [submitting, setSubmitting] = useState(false);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [draggedFaqId, setDraggedFaqId] = useState<string | null>(null);
+  const pageSize = 12;
+  const filteredItems = useMemo(() => items.filter((item) => JSON.stringify(item).toLocaleLowerCase('fr-FR').includes(search.toLocaleLowerCase('fr-FR'))), [items, search]);
+  const paginatedItems = filteredItems.slice((page - 1) * pageSize, page * pageSize);
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
 
   const startCreate = () => {
     const initial: AnyRecord = {};
     config.fields.forEach((field) => {
-      initial[field.name] = field.type === 'checkbox' ? true : field.name === 'rating' ? '5' : field.name === 'status' ? 'draft' : '';
+      initial[field.name] = field.type === 'checkbox' ? false : field.type === 'multi' ? [] : field.name === 'rating' ? '5' : field.name === 'status' ? 'draft' : '';
     });
     if (config.key === 'reviews') initial.status = 'pending';
     if (config.key === 'faqs') {
@@ -275,6 +322,7 @@ function ResourceManager({
     if (config.key === 'pixels') {
       initial.provider = 'meta';
       initial.is_active = true;
+      initial.requires_consent = true;
     }
     setEditing({});
     setForm(initial);
@@ -285,6 +333,10 @@ function ResourceManager({
     const next = { ...item };
     config.fields.forEach((field) => {
       if (next[field.name] === null || next[field.name] === undefined) next[field.name] = field.type === 'checkbox' ? false : '';
+      if (field.type === 'multi' && !Array.isArray(next[field.name])) {
+        try { next[field.name] = JSON.parse(next[field.name] || '[]'); } catch { next[field.name] = []; }
+      }
+      if (field.type === 'datetime-local' && next[field.name]) next[field.name] = String(next[field.name]).slice(0, 16);
     });
     setForm(next);
   };
@@ -317,6 +369,22 @@ function ResourceManager({
     }
   };
 
+  const reorderFaq = async (targetId: string) => {
+    if (config.key !== 'faqs' || !draggedFaqId || draggedFaqId === targetId) return;
+    const ordered = [...items];
+    const fromIndex = ordered.findIndex((item) => item.id === draggedFaqId);
+    const targetIndex = ordered.findIndex((item) => item.id === targetId);
+    if (fromIndex < 0 || targetIndex < 0) return;
+    const [moved] = ordered.splice(fromIndex, 1);
+    ordered.splice(targetIndex, 0, moved);
+    try {
+      await adminRequest('/faqs/reorder', { method: 'PUT', body: { ids: ordered.map((item) => item.id) } });
+      await onRefresh();
+      onNotify('Ordre des questions enregistré.');
+    } catch (error) { onNotify(error instanceof Error ? error.message : 'Réorganisation impossible.'); }
+    finally { setDraggedFaqId(null); }
+  };
+
   return (
     <>
       <PanelHeader
@@ -325,6 +393,12 @@ function ResourceManager({
         description={config.description}
         action={<button type="button" onClick={startCreate} className="admin-primary-button"><Plus className="h-4 w-4" aria-hidden="true" /> Ajouter</button>}
       />
+
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <label className="sr-only" htmlFor={`${config.key}-search`}>Rechercher</label>
+        <input id={`${config.key}-search`} value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Rechercher…" className="admin-input max-w-sm" />
+        <p className="text-xs text-[#3A3A3A]">{filteredItems.length} élément(s)</p>
+      </div>
 
       {editing !== null && (
         <form onSubmit={submit} className="mb-8 border border-[#002141]/15 bg-white p-5 shadow-sm sm:p-7">
@@ -345,6 +419,8 @@ function ResourceManager({
                     <input type="checkbox" checked={Boolean(form[field.name])} onChange={(event) => setForm((current) => ({ ...current, [field.name]: event.target.checked }))} className="h-4 w-4 accent-[#AC854B]" />
                     {field.label}
                   </label>
+                ) : field.type === 'multi' ? (
+                  <fieldset className="border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">{field.label}</legend><div className="mt-2 flex flex-wrap gap-4">{field.options?.map((option) => <label key={option.value} className="flex items-center gap-2 text-sm text-[#002141]"><input type="checkbox" checked={(Array.isArray(form[field.name]) ? form[field.name] : []).includes(option.value)} onChange={(event) => setForm((current) => { const selected = Array.isArray(current[field.name]) ? current[field.name] : []; return { ...current, [field.name]: event.target.checked ? [...selected, option.value] : selected.filter((value: string) => value !== option.value) }; })} className="h-4 w-4 accent-[#AC854B]" />{option.label}</label>)}</div></fieldset>
                 ) : (
                   <label className="block text-sm font-semibold text-[#002141]">
                     {field.label}
@@ -355,13 +431,15 @@ function ResourceManager({
                     ) : field.type === 'textarea' ? (
                       <textarea value={String(form[field.name] || '')} onChange={(event) => setForm((current) => ({ ...current, [field.name]: event.target.value }))} className="admin-input mt-2 min-h-28 resize-y" required={field.required} placeholder={field.placeholder} />
                     ) : (
-                      <input value={String(form[field.name] || '')} onChange={(event) => setForm((current) => ({ ...current, [field.name]: event.target.value }))} className="admin-input mt-2" required={field.required} placeholder={field.placeholder} />
+                      <input type={field.type === 'datetime-local' ? 'datetime-local' : 'text'} value={String(form[field.name] || '')} onChange={(event) => setForm((current) => ({ ...current, [field.name]: event.target.value }))} className="admin-input mt-2" required={field.required} placeholder={field.placeholder} />
                     )}
                   </label>
                 )}
               </div>
             ))}
           </div>
+          {config.key === 'meta' && <div className="mt-6 border border-[#002141]/15 bg-[#FAF9F7] p-5"><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#AC854B]">Aperçu Google</p><p className="mt-3 truncate text-lg text-[#1a0dab]">{form.title || 'Titre de la page'}</p><p className="mt-1 text-xs text-emerald-800">heritage.ci/{form.page_key || 'page'}</p><p className="mt-1 text-sm text-[#3A3A3A]">{form.description || 'La description apparaîtra ici.'}</p><p className={`mt-3 text-xs ${String(form.title || '').length > 60 || String(form.description || '').length > 160 ? 'text-red-800' : 'text-[#3A3A3A]'}`}>Titre : {String(form.title || '').length}/60 · Description : {String(form.description || '').length}/160</p></div>}
+          {config.key === 'blogs' && <div className="mt-6 border border-[#002141]/15 bg-[#FAF9F7] p-4 text-xs text-[#3A3A3A]">Le statut “Programmé” ne sera visible publiquement qu’à la date et l’heure sélectionnées. Les articles brouillon et archivés restent invisibles.</div>}
           <div className="mt-7 flex flex-wrap gap-3">
             <button type="submit" disabled={submitting} className="admin-primary-button">{submitting ? 'Enregistrement…' : 'Enregistrer'}</button>
             <button type="button" onClick={() => setEditing(null)} className="admin-secondary-button">Annuler</button>
@@ -369,10 +447,10 @@ function ResourceManager({
         </form>
       )}
 
-      {items.length === 0 ? <EmptyState title="Aucun élément" body="Créez le premier élément avec le bouton Ajouter." /> : (
+      {filteredItems.length === 0 ? <EmptyState title={items.length ? 'Aucun résultat' : 'Aucun élément'} body={items.length ? 'Modifiez votre recherche.' : 'Créez le premier élément avec le bouton Ajouter.'} /> : (
         <div className="divide-y divide-[#002141]/10 border border-[#002141]/15 bg-white">
-          {items.map((item) => (
-            <article key={item.id} className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          {paginatedItems.map((item) => (
+            <article key={item.id} draggable={config.key === 'faqs'} onDragStart={() => setDraggedFaqId(item.id)} onDragOver={(event) => { if (config.key === 'faqs') event.preventDefault(); }} onDrop={() => void reorderFaq(item.id)} className={`flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between ${config.key === 'faqs' ? 'cursor-grab' : ''}`}>
               <div className="min-w-0">
                 <h2 className="truncate font-semibold text-[#002141]">{item.title || item.question || item.label || item.author_name || item.page_key || 'Élément sans titre'}</h2>
                 <p className="mt-1 text-sm text-[#3A3A3A]">{config.summary(item)}</p>
@@ -385,6 +463,7 @@ function ResourceManager({
           ))}
         </div>
       )}
+      {filteredItems.length > pageSize && <div className="mt-4 flex items-center justify-between"><button type="button" disabled={page === 1} onClick={() => setPage((current) => current - 1)} className="admin-secondary-button disabled:opacity-40">Précédent</button><span className="text-xs text-[#3A3A3A]">Page {page} / {totalPages}</span><button type="button" disabled={page === totalPages} onClick={() => setPage((current) => current + 1)} className="admin-secondary-button disabled:opacity-40">Suivant</button></div>}
     </>
   );
 }
@@ -393,6 +472,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [admin, setAdmin] = useState<AdminSession | null>(null);
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('heritage-admin-sidebar-collapsed') === 'true');
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
   const [dashboard, setDashboard] = useState<AnyRecord | null>(null);
@@ -407,6 +487,36 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [editingProduct, setEditingProduct] = useState<AnyRecord | null>(null);
   const [productForm, setProductForm] = useState<AnyRecord>(emptyProduct());
   const [generatedCode, setGeneratedCode] = useState('');
+  const [auditLogs, setAuditLogs] = useState<AnyRecord[]>([]);
+  const [dashboardPeriod, setDashboardPeriod] = useState<'day' | 'week' | 'month' | 'custom'>('month');
+  const [dashboardCustomFrom, setDashboardCustomFrom] = useState('');
+  const [dashboardCustomTo, setDashboardCustomTo] = useState('');
+  const [productSearch, setProductSearch] = useState('');
+  const [productStatusFilter, setProductStatusFilter] = useState('');
+  const [productCategoryFilter, setProductCategoryFilter] = useState('');
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [userSearch, setUserSearch] = useState('');
+  const [orderSearch, setOrderSearch] = useState('');
+  const [orderStatusFilter, setOrderStatusFilter] = useState('');
+
+  const dashboardUrl = () => {
+    const now = new Date();
+    const from = new Date(now);
+    if (dashboardPeriod === 'day') from.setHours(0, 0, 0, 0);
+    if (dashboardPeriod === 'week') from.setDate(now.getDate() - 6);
+    if (dashboardPeriod === 'month') from.setDate(now.getDate() - 29);
+    const start = dashboardPeriod === 'custom' && dashboardCustomFrom ? new Date(dashboardCustomFrom) : from;
+    const end = dashboardPeriod === 'custom' && dashboardCustomTo ? new Date(`${dashboardCustomTo}T23:59:59`) : now;
+    return `/dashboard?from=${encodeURIComponent(start.toISOString())}&to=${encodeURIComponent(end.toISOString())}`;
+  };
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      localStorage.setItem('heritage-admin-sidebar-collapsed', String(next));
+      return next;
+    });
+  };
 
   const notify = (message: string) => {
     setNotice(message);
@@ -416,17 +526,19 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const loadTab = async (tab: AdminTab) => {
     setLoading(true);
     try {
-      if (tab === 'dashboard') setDashboard(await adminRequest('/dashboard'));
+      if (tab === 'dashboard') setDashboard(await adminRequest(dashboardUrl()));
       if (tab === 'products') {
-        const [catalog, gallery] = await Promise.all([adminRequest<AnyRecord[]>('/products'), adminRequest<AnyRecord[]>('/media')]);
+        const [catalog, gallery, reviews] = await Promise.all([adminRequest<AnyRecord[]>('/products'), adminRequest<AnyRecord[]>('/media'), adminRequest<AnyRecord[]>('/resources/reviews')]);
         setProducts(catalog);
         setMedia(gallery);
+        setResources((current) => ({ ...current, reviews }));
       }
       if (tab === 'orders') setOrders(await adminRequest('/orders'));
       if (tab === 'administrators') {
-        const response = await adminRequest<{ administrators: AnyRecord[]; invitations: AnyRecord[] }>('/administrators');
+        const response = await adminRequest<{ administrators: AnyRecord[]; invitations: AnyRecord[]; auditLogs: AnyRecord[] }>('/administrators');
         setAdministrators(response.administrators);
         setInvitations(response.invitations);
+        setAuditLogs(response.auditLogs || []);
       }
       if (tab === 'users') setUsers(await adminRequest('/users'));
       if (tab === 'media') setMedia(await adminRequest('/media'));
@@ -461,6 +573,19 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
 
   const dashboardTotals = dashboard?.totals || {};
   const lowStockProducts = useMemo(() => products.filter((product) => Number(product.stock_quantity) <= Number(product.low_stock_threshold)), [products]);
+  const visibleProducts = useMemo(() => products.filter((product) => {
+    const query = productSearch.trim().toLocaleLowerCase('fr-FR');
+    const matchesSearch = !query || [product.name, product.reference, product.sku, product.brand].some((value) => String(value || '').toLocaleLowerCase('fr-FR').includes(query));
+    return matchesSearch && (!productStatusFilter || product.status === productStatusFilter) && (!productCategoryFilter || product.category === productCategoryFilter);
+  }), [products, productSearch, productStatusFilter, productCategoryFilter]);
+  const visibleOrders = useMemo(() => orders.filter((order) => {
+    const query = orderSearch.trim().toLocaleLowerCase('fr-FR');
+    return (!query || [order.order_number, order.customer_name, order.customer_email, order.payment_reference].some((value) => String(value || '').toLocaleLowerCase('fr-FR').includes(query))) && (!orderStatusFilter || order.status === orderStatusFilter);
+  }), [orders, orderSearch, orderStatusFilter]);
+  const visibleUsers = useMemo(() => users.filter((user) => {
+    const query = userSearch.trim().toLocaleLowerCase('fr-FR');
+    return !query || [user.full_name, user.email, user.phone].some((value) => String(value || '').toLocaleLowerCase('fr-FR').includes(query));
+  }), [users, userSearch]);
 
   const logout = async () => {
     await signOutAdministrator();
@@ -476,6 +601,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
 
       const variants = JSON.parse(productForm.variants || '[]');
       if (Array.isArray(variants)) await adminRequest(`/products/${product.id}/variants`, { method: 'PUT', body: { variants } });
+      const mediaIds = Array.isArray(productForm.media_ids) ? productForm.media_ids : [];
+      if (mediaIds.length || productForm.primary_media_id) await adminRequest(`/products/${product.id}/media`, { method: 'PUT', body: { media_ids: mediaIds, primary_media_id: productForm.primary_media_id || null } });
       setEditingProduct(null);
       setProductForm(emptyProduct());
       await loadTab('products');
@@ -496,9 +623,28 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     }
   };
 
+  const runBulkProductAction = async (action: 'publish' | 'unpublish' | 'archive' | 'delete') => {
+    if (!selectedProductIds.length) return notify('Sélectionnez au moins un produit.');
+    const label = action === 'publish' ? 'publier' : action === 'unpublish' ? 'dépublier' : action === 'archive' ? 'archiver' : 'supprimer définitivement';
+    if (!window.confirm(`Confirmer : ${label} ${selectedProductIds.length} produit(s) ?`)) return;
+    try {
+      await adminRequest('/products/bulk', { method: 'POST', body: { ids: selectedProductIds, action } });
+      setSelectedProductIds([]);
+      await loadTab('products');
+      notify(`Action groupée effectuée : ${label}.`);
+    } catch (error) { notify(error instanceof Error ? error.message : 'Action groupée impossible.'); }
+  };
+
   const updateOrder = async (order: AnyRecord, status: string) => {
     try {
-      await adminRequest(`/orders/${order.id}`, { method: 'PATCH', body: { status } });
+      let delivery_reference = order.delivery_reference || '';
+      let delivery_proof_url = order.delivery_proof_url || '';
+      if (status === 'delivered' && !delivery_reference && !delivery_proof_url) {
+        delivery_reference = window.prompt('Référence ou preuve de livraison obligatoire :') || '';
+        if (!delivery_reference) return notify('La commande reste inchangée : une preuve ou référence est obligatoire.');
+      }
+      const note = window.prompt('Note interne pour l’historique (facultative) :') || '';
+      await adminRequest(`/orders/${order.id}`, { method: 'PATCH', body: { status, delivery_reference, delivery_proof_url, note } });
       await loadTab('orders');
       notify('Statut de commande mis à jour.');
     } catch (error) {
@@ -518,83 +664,121 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   };
 
   const uploadMedia = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) {
-      notify('L’image dépasse 10 Mo.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = async () => {
+    const files: File[] = Array.from(event.target.files || []) as File[];
+    for (const file of files) {
+      if (file.size > 10 * 1024 * 1024) { notify(`« ${file.name} » dépasse 10 Mo.`); continue; }
+      const altText = window.prompt(`Texte alternatif obligatoire pour « ${file.name} » :`);
+      if (!altText?.trim()) { notify(`« ${file.name} » n’a pas été ajouté : le texte alternatif est obligatoire.`); continue; }
+      const folder = window.prompt(`Dossier pour « ${file.name} » (facultatif) :`, 'general') || 'general';
       try {
-        await adminRequest('/media/upload', {
-          method: 'POST',
-          body: { fileName: file.name, mimeType: file.type, contentBase64: String(reader.result), altText: '' }
+        const contentBase64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error('Lecture du fichier impossible.'));
+          reader.onload = () => resolve(String(reader.result));
+          reader.readAsDataURL(file);
         });
-        await loadTab('media');
-        notify('Image ajoutée à la galerie.');
-      } catch (error) {
-        notify(error instanceof Error ? error.message : 'Envoi de l’image impossible.');
-      }
-    };
-    reader.readAsDataURL(file);
+        await adminRequest('/media/upload', { method: 'POST', body: { fileName: file.name, mimeType: file.type, contentBase64, altText: altText.trim(), folder } });
+      } catch (error) { notify(error instanceof Error ? error.message : `Envoi de « ${file.name} » impossible.`); }
+    }
     event.target.value = '';
+    await loadTab('media');
+    if (files.length) notify('Les images valides ont été ajoutées à la galerie.');
   };
 
   if (!admin) {
     return <div className="flex min-h-screen items-center justify-center bg-[#002141] text-sm text-[#FAF9F7]"><LoaderCircle className="mr-3 h-5 w-5 animate-spin" /> Vérification de l’accès…</div>;
   }
 
-  const renderDashboard = () => (
-    <>
-      <PanelHeader eyebrow="Pilotage" title="Tableau de bord" description="Une vue d’ensemble claire de l’activité commerciale, des commandes et des contenus à traiter." action={<button type="button" onClick={() => void loadTab('dashboard')} className="admin-secondary-button"><RefreshCw className="h-4 w-4" /> Actualiser</button>} />
+  const renderDashboard = () => {
+    const chart = dashboard?.chart || [];
+    const maxRevenue = Math.max(...chart.map((point: AnyRecord) => Number(point.revenueXOF || 0)), 1);
+    const statuses = dashboardTotals.statuses || {};
+    return <>
+      <PanelHeader eyebrow="Pilotage" title="Tableau de bord" description="Une vue d’ensemble calculée depuis Supabase : activité commerciale, commandes, stock et contenus à traiter." action={<button type="button" onClick={() => void loadTab('dashboard')} className="admin-secondary-button"><RefreshCw className="h-4 w-4" /> Actualiser</button>} />
+      <div className="mb-6 flex flex-wrap items-end gap-3 border border-[#002141]/12 bg-white p-4">
+        <label className="text-xs font-semibold text-[#002141]">Période<select value={dashboardPeriod} onChange={(event) => setDashboardPeriod(event.target.value as typeof dashboardPeriod)} className="admin-input mt-1 min-w-40"><option value="day">Aujourd’hui</option><option value="week">7 derniers jours</option><option value="month">30 derniers jours</option><option value="custom">Personnalisée</option></select></label>
+        {dashboardPeriod === 'custom' && <><label className="text-xs font-semibold text-[#002141]">Du<input type="date" value={dashboardCustomFrom} onChange={(event) => setDashboardCustomFrom(event.target.value)} className="admin-input mt-1" /></label><label className="text-xs font-semibold text-[#002141]">Au<input type="date" value={dashboardCustomTo} onChange={(event) => setDashboardCustomTo(event.target.value)} className="admin-input mt-1" /></label></>}
+        <button type="button" onClick={() => void loadTab('dashboard')} className="admin-primary-button">Appliquer</button>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          ['Chiffre d’affaires', formatXOF(dashboardTotals.revenueXOF), 'Commandes visibles dans Supabase'],
-          ['Commandes en cours', String(dashboardTotals.pendingOrders || 0), 'Paiement ou préparation'],
-          ['Panier moyen', formatXOF(dashboardTotals.averageCartXOF), 'Par commande enregistrée'],
+          ['Chiffre d’affaires', formatXOF(dashboardTotals.revenueXOF), 'Commandes encaissées sur la période'],
+          ['Commandes', String(dashboardTotals.orders || 0), `${Object.values(statuses).reduce((sum: number, count: any) => sum + Number(count || 0), 0)} enregistrée(s)`],
+          ['Panier moyen', formatXOF(dashboardTotals.averageCartXOF), 'Sur les commandes encaissées'],
           ['Stock à surveiller', String(dashboardTotals.lowStock || 0), 'Produits au seuil ou épuisés']
         ].map(([label, value, note]) => <article key={label} className="border border-[#002141]/12 bg-white p-5 shadow-sm"><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#3A3A3A]">{label}</p><p className="font-playfair mt-4 text-3xl font-semibold text-[#002141]">{value}</p><p className="mt-3 text-sm text-[#3A3A3A]">{note}</p></article>)}
       </div>
+      {Object.keys(statuses).length > 0 && <section className="mt-6 border border-[#002141]/12 bg-white p-5"><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#3A3A3A]">Répartition des commandes par statut</p><div className="mt-4 flex flex-wrap gap-3">{Object.entries(statuses).map(([status, count]) => <button type="button" key={status} onClick={() => { setOrderStatusFilter(status); selectTab('orders'); }} className="border border-[#002141]/15 px-3 py-2 text-left text-xs hover:border-[#AC854B]"><strong className="text-[#AC854B]">{Number(count)}</strong> <span className="ml-1 text-[#002141]">{statusLabel[status] || status}</span></button>)}</div></section>}
       <div className="mt-7 grid gap-6 xl:grid-cols-[1.4fr_1fr]">
-        <section className="border border-[#002141]/12 bg-white p-6"><h2 className="font-playfair text-2xl font-semibold">Dernières commandes</h2>{(dashboard?.recentOrders || []).length === 0 ? <p className="mt-8 text-sm text-[#3A3A3A]">Aucune commande enregistrée pour le moment.</p> : <div className="mt-5 divide-y divide-[#002141]/10">{dashboard.recentOrders.map((order: AnyRecord) => <div key={order.id} className="flex justify-between gap-4 py-4 text-sm"><span>{order.order_number || order.id}</span><span>{formatXOF(order.total_xof)}</span><span className="text-[#AC854B]">{statusLabel[order.status] || order.status}</span></div>)}</div>}</section>
-        <section className="border border-[#002141]/12 bg-[#002141] p-6 text-[#FAF9F7]"><p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#D6BB8F]">Contenu à traiter</p><div className="mt-6 space-y-4"><p><strong className="font-playfair text-3xl text-[#D6BB8F]">{dashboardTotals.pendingReviews || 0}</strong><span className="ml-3 text-sm">avis en attente</span></p><p><strong className="font-playfair text-3xl text-[#D6BB8F]">{dashboardTotals.customers || 0}</strong><span className="ml-3 text-sm">utilisateurs enregistrés</span></p></div></section>
+        <section className="border border-[#002141]/12 bg-white p-6"><h2 className="font-playfair text-2xl font-semibold">Évolution de l’activité</h2>{chart.length === 0 ? <p className="mt-8 text-sm text-[#3A3A3A]">Aucune commande sur cette période.</p> : <div className="mt-6 flex h-48 items-end gap-2">{chart.map((point: AnyRecord) => <div key={point.date} className="group flex min-w-0 flex-1 flex-col items-center justify-end gap-2"><span className="hidden rounded bg-[#002141] px-2 py-1 text-[10px] text-white group-hover:block">{formatXOF(point.revenueXOF)} · {point.orders} cmd.</span><div className="w-full bg-[#AC854B]/85 transition hover:bg-[#002141]" style={{ height: `${Math.max(5, Math.round((Number(point.revenueXOF || 0) / maxRevenue) * 100))}%` }} /><span className="text-[9px] text-[#3A3A3A]">{String(point.date).slice(5)}</span></div>)}</div>}</section>
+        <section className="border border-[#002141]/12 bg-[#002141] p-6 text-[#FAF9F7]"><p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#D6BB8F]">Contenu à traiter</p><div className="mt-6 space-y-4"><button type="button" onClick={() => selectTab('reviews')} className="block text-left hover:text-[#D6BB8F]"><strong className="font-playfair text-3xl text-[#D6BB8F]">{dashboardTotals.pendingReviews || 0}</strong><span className="ml-3 text-sm">avis en attente</span></button><button type="button" onClick={() => selectTab('users')} className="block text-left hover:text-[#D6BB8F]"><strong className="font-playfair text-3xl text-[#D6BB8F]">{dashboardTotals.newCustomers || 0}</strong><span className="ml-3 text-sm">nouveaux utilisateurs</span></button><p><strong className="font-playfair text-3xl text-[#D6BB8F]">{dashboardTotals.unreadMessages || 0}</strong><span className="ml-3 text-sm">messages non lus</span></p></div></section>
       </div>
-    </>
-  );
+      <div className="mt-7 grid gap-6 xl:grid-cols-2"><section className="border border-[#002141]/12 bg-white p-6"><h2 className="font-playfair text-2xl font-semibold">Dernières commandes</h2>{(dashboard?.recentOrders || []).length === 0 ? <p className="mt-8 text-sm text-[#3A3A3A]">Aucune commande enregistrée pour le moment.</p> : <div className="mt-5 divide-y divide-[#002141]/10">{dashboard.recentOrders.map((order: AnyRecord) => <button key={order.id} type="button" onClick={() => selectTab('orders')} className="flex w-full justify-between gap-4 py-4 text-left text-sm hover:text-[#AC854B]"><span>{order.order_number || order.id}</span><span>{formatXOF(order.total_xof)}</span><span>{statusLabel[order.status] || order.status}</span></button>)}</div>}</section><section className="border border-[#002141]/12 bg-white p-6"><h2 className="font-playfair text-2xl font-semibold">Stock faible ou épuisé</h2>{(dashboard?.lowStockProducts || []).length === 0 ? <p className="mt-8 text-sm text-[#3A3A3A]">Aucun produit à surveiller.</p> : <div className="mt-5 divide-y divide-[#002141]/10">{dashboard.lowStockProducts.map((product: AnyRecord) => <button key={product.id} type="button" onClick={() => selectTab('products')} className="flex w-full justify-between gap-4 py-4 text-left text-sm hover:text-[#AC854B]"><span>{product.name}</span><span>{product.stock_quantity} · {product.stock_status}</span></button>)}</div>}</section></div>
+    </>;
+  };
 
   const renderProducts = () => (
     <>
       <PanelHeader eyebrow="Commerce" title="Produits et stocks" description="Créez les fiches produit complètes, pilotez les prix, les marges, les variantes, les caractéristiques et le stock." action={<button type="button" onClick={() => { setEditingProduct({}); setProductForm(emptyProduct()); }} className="admin-primary-button"><PackagePlus className="h-4 w-4" /> Nouveau produit</button>} />
       {editingProduct !== null && <form onSubmit={saveProduct} className="mb-8 border border-[#002141]/15 bg-white p-5 shadow-sm sm:p-7"><div className="mb-6 flex justify-between gap-4"><div><h2 className="font-playfair text-2xl font-semibold">{editingProduct.id ? 'Modifier le produit' : 'Créer un produit'}</h2><p className="mt-1 text-sm text-[#3A3A3A]">Les données structurées permettent de générer une fiche produit exhaustive.</p></div><button type="button" onClick={() => setEditingProduct(null)} className="admin-icon-button" aria-label="Fermer"><X className="h-4 w-4" /></button></div><div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         {[
-          ['name', 'Nom du produit', true], ['brand', 'Marque'], ['category', 'Catégorie'], ['sku', 'SKU'], ['reference', 'Référence'], ['slug', 'Lien produit'], ['purchase_price_xof', 'Prix d’achat FCFA'], ['regular_price_xof', 'Prix normal FCFA'], ['sale_price_xof', 'Prix actuel / réduit FCFA'], ['stock_quantity', 'Stock disponible'], ['low_stock_threshold', 'Seuil d’alerte'], ['seo_title', 'Titre SEO']
+          ['name', 'Nom du produit', true], ['brand', 'Marque'], ['sku', 'SKU'], ['reference', 'Référence'], ['slug', 'Lien produit'], ['purchase_price_xof', 'Prix d’achat FCFA'], ['regular_price_xof', 'Prix normal FCFA'], ['sale_price_xof', 'Prix actuel / réduit FCFA'], ['stock_quantity', 'Stock disponible'], ['low_stock_threshold', 'Seuil d’alerte'], ['seo_title', 'Titre SEO']
         ].map(([name, label, required]) => <label key={name} className="text-sm font-semibold text-[#002141]">{label}<input required={Boolean(required)} type={String(name).includes('price') || String(name).includes('stock') ? 'number' : 'text'} value={String(productForm[String(name)] ?? '')} onChange={(event) => setProductForm((current) => ({ ...current, [String(name)]: event.target.value }))} className="admin-input mt-2" /></label>)}
+        <label className="text-sm font-semibold text-[#002141]">Catégorie<select value={productForm.category || 'montres'} onChange={(event) => setProductForm((current) => ({ ...current, category: event.target.value }))} className="admin-input mt-2"><option value="montres">Montres</option><option value="parfums">Parfums — masqués tant qu’aucun produit publié</option><option value="lunettes">Lunettes — masquées tant qu’aucun produit publié</option></select></label>
         <label className="text-sm font-semibold text-[#002141]">Statut<select value={productForm.status} onChange={(event) => setProductForm((current) => ({ ...current, status: event.target.value }))} className="admin-input mt-2"><option value="draft">Brouillon</option><option value="published">Publié</option><option value="archived">Archivé</option></select></label>
+        <label className="text-sm font-semibold text-[#002141]">Politique de stock<select value={productForm.stock_policy || 'standard'} onChange={(event) => setProductForm((current) => ({ ...current, stock_policy: event.target.value }))} className="admin-input mt-2"><option value="standard">Stock géré</option><option value="on_order">Sur commande</option></select></label>
         <label className="text-sm font-semibold text-[#002141]">Image principale<select value={productForm.primary_media_id || ''} onChange={(event) => setProductForm((current) => ({ ...current, primary_media_id: event.target.value }))} className="admin-input mt-2"><option value="">Choisir dans la galerie</option>{media.map((asset) => <option key={asset.id} value={asset.id}>{asset.file_name}</option>)}</select></label>
+        <fieldset className="md:col-span-2 xl:col-span-3 border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Galerie produit — cochez les images, puis choisissez l’image principale</legend><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{media.map((asset) => <label key={asset.id} className="flex items-center gap-2 border border-[#002141]/10 p-2 text-xs text-[#002141]"><input type="checkbox" checked={(productForm.media_ids || []).includes(asset.id)} onChange={(event) => setProductForm((current) => { const ids = Array.isArray(current.media_ids) ? current.media_ids : []; return { ...current, media_ids: event.target.checked ? [...ids, asset.id] : ids.filter((id: string) => id !== asset.id) }; })} className="h-4 w-4 accent-[#AC854B]" /><img src={asset.public_url} alt={asset.alt_text || asset.file_name} className="h-10 w-10 object-cover" /><span className="truncate">{asset.file_name}</span></label>)}</div></fieldset>
         <label className="md:col-span-2 xl:col-span-3 text-sm font-semibold text-[#002141]">Description courte<textarea value={productForm.short_description || ''} onChange={(event) => setProductForm((current) => ({ ...current, short_description: event.target.value }))} className="admin-input mt-2 min-h-24" /></label>
         <div className="md:col-span-2 xl:col-span-3"><RichTextEditor id="product-description" label="Description détaillée" value={productForm.description_html || ''} onChange={(value) => setProductForm((current) => ({ ...current, description_html: value }))} hint="Utilisez les titres, listes et liens pour une fiche de vente structurée." /></div>
-        {[
-          ['colors', 'Couleurs, au format JSON', '["Bleu", "Acier"]'], ['attributes', 'Caractéristiques, au format JSON', '{"mouvement":"Automatique","verre":"Saphir"}'], ['variants', 'Variantes, au format JSON', '[{"name":"40 mm","sku":"REF-40","stock_quantity":2}]'], ['faq', 'F.A.Q. produit, au format JSON', '[{"question":"…","answer":"…"}]']
-        ].map(([name, label, placeholder]) => <label key={name} className="md:col-span-2 xl:col-span-3 text-sm font-semibold text-[#002141]">{label}<textarea value={productForm[String(name)] || ''} onChange={(event) => setProductForm((current) => ({ ...current, [String(name)]: event.target.value }))} className="admin-input mt-2 min-h-28 font-mono text-xs" placeholder={placeholder} /></label>)}
+        {[['value_story_title', 'Titre de l’histoire produit'], ['value_story_text', 'Texte de l’histoire produit'], ['provenance_summary', 'Provenance — à renseigner uniquement si validée'], ['warranty_summary', 'Garantie / service — à renseigner uniquement si validée'], ['delivery_summary', 'Livraison — à renseigner uniquement si validée']].map(([name, label]) => <label key={name} className="md:col-span-2 xl:col-span-3 text-sm font-semibold text-[#002141]">{label}<textarea value={productForm[name] || ''} onChange={(event) => setProductForm((current) => ({ ...current, [name]: event.target.value }))} className="admin-input mt-2 min-h-20" /></label>)}
+        <ProductStructuredFields form={productForm} onChange={(field, value) => setProductForm((current) => ({ ...current, [field]: value }))} />
         <label className="md:col-span-2 xl:col-span-3 text-sm font-semibold text-[#002141]">Description SEO<textarea value={productForm.seo_description || ''} onChange={(event) => setProductForm((current) => ({ ...current, seo_description: event.target.value }))} className="admin-input mt-2 min-h-20" /></label>
       </div><div className="mt-7 flex flex-wrap gap-3"><button type="submit" className="admin-primary-button">Enregistrer le produit</button><button type="button" onClick={() => setEditingProduct(null)} className="admin-secondary-button">Annuler</button></div></form>}
-      {products.length === 0 ? <EmptyState title="Le catalogue Supabase est vide" body="Créez votre premier produit, puis envoyez les images depuis la galerie média." /> : <div className="overflow-x-auto border border-[#002141]/15 bg-white"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-[#002141] text-[#FAF9F7]"><tr><th className="p-4">Produit</th><th className="p-4">Prix actuel</th><th className="p-4">Marge brute</th><th className="p-4">Stock</th><th className="p-4">État</th><th className="p-4 text-right">Actions</th></tr></thead><tbody>{products.map((product) => { const currentPrice = Number(product.sale_price_xof ?? product.regular_price_xof ?? 0); const margin = currentPrice - Number(product.purchase_price_xof || 0); return <tr key={product.id} className="border-t border-[#002141]/10"><td className="p-4"><p className="font-semibold text-[#002141]">{product.name}</p><p className="mt-1 text-xs text-[#3A3A3A]">{product.reference || product.sku || 'Sans référence'}</p></td><td className="p-4">{formatXOF(currentPrice)}</td><td className="p-4 text-emerald-800">{formatXOF(margin)}</td><td className="p-4"><span className={Number(product.stock_quantity) <= Number(product.low_stock_threshold) ? 'font-bold text-red-800' : ''}>{product.stock_quantity}</span></td><td className="p-4"><span className="admin-pill">{product.status}</span></td><td className="p-4"><div className="flex justify-end gap-2"><button type="button" onClick={() => { setEditingProduct(product); setProductForm(toProductForm(product)); }} className="admin-icon-button" aria-label="Modifier"><Pencil className="h-4 w-4" /></button><button type="button" onClick={() => void deleteProduct(product)} className="admin-icon-button text-red-800" aria-label="Supprimer"><Trash2 className="h-4 w-4" /></button></div></td></tr>})}</tbody></table></div>}
+      {products.length > 0 && <div className="mb-5 flex flex-wrap items-end gap-3 border border-[#002141]/12 bg-white p-4"><label className="text-xs font-semibold">Rechercher<input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Nom, référence, marque…" className="admin-input mt-1 min-w-56" /></label><label className="text-xs font-semibold">Statut<select value={productStatusFilter} onChange={(event) => setProductStatusFilter(event.target.value)} className="admin-input mt-1"><option value="">Tous</option><option value="draft">Brouillon</option><option value="published">Publié</option><option value="archived">Archivé</option></select></label><label className="text-xs font-semibold">Catégorie<select value={productCategoryFilter} onChange={(event) => setProductCategoryFilter(event.target.value)} className="admin-input mt-1"><option value="">Toutes</option><option value="montres">Montres</option><option value="parfums">Parfums</option><option value="lunettes">Lunettes</option></select></label><button type="button" onClick={() => void downloadAdminCsv('/products/export.csv', 'heritage-produits.csv').catch((error) => notify(error.message))} className="admin-secondary-button">Exporter CSV</button>{selectedProductIds.length > 0 && <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void runBulkProductAction('publish')} className="admin-secondary-button">Publier ({selectedProductIds.length})</button><button type="button" onClick={() => void runBulkProductAction('unpublish')} className="admin-secondary-button">Dépublier</button><button type="button" onClick={() => void runBulkProductAction('archive')} className="admin-secondary-button">Archiver</button><button type="button" onClick={() => void runBulkProductAction('delete')} className="admin-secondary-button text-red-800">Supprimer</button></div>}</div>}
+      {products.length === 0 ? <EmptyState title="Le catalogue Supabase est vide" body="Créez votre premier produit, puis envoyez les images depuis la galerie média." /> : <div className="overflow-x-auto border border-[#002141]/15 bg-white"><table className="w-full min-w-[960px] text-left text-sm"><thead className="bg-[#002141] text-[#FAF9F7]"><tr><th className="p-4"><input type="checkbox" checked={visibleProducts.length > 0 && visibleProducts.every((product) => selectedProductIds.includes(product.id))} onChange={(event) => setSelectedProductIds(event.target.checked ? visibleProducts.map((product) => product.id) : [])} aria-label="Sélectionner les produits affichés" className="accent-[#AC854B]" /></th><th className="p-4">Produit</th><th className="p-4">Prix actuel</th><th className="p-4">Marge brute</th><th className="p-4">Stock</th><th className="p-4">État</th><th className="p-4 text-right">Actions</th></tr></thead><tbody>{visibleProducts.map((product) => { const currentPrice = Number(product.sale_price_xof ?? product.regular_price_xof ?? 0); const margin = currentPrice - Number(product.purchase_price_xof || 0); const marginRate = currentPrice > 0 ? Math.round((margin / currentPrice) * 100) : 0; return <tr key={product.id} className="border-t border-[#002141]/10"><td className="p-4"><input type="checkbox" checked={selectedProductIds.includes(product.id)} onChange={(event) => setSelectedProductIds((current) => event.target.checked ? [...new Set([...current, product.id])] : current.filter((id) => id !== product.id))} aria-label={`Sélectionner ${product.name}`} className="accent-[#AC854B]" /></td><td className="p-4"><p className="font-semibold text-[#002141]">{product.name}</p><p className="mt-1 text-xs text-[#3A3A3A]">{product.reference || product.sku || 'Sans référence'}</p></td><td className="p-4">{formatXOF(currentPrice)}</td><td className="p-4 text-emerald-800">{formatXOF(margin)} <span className="text-xs">({marginRate} %)</span></td><td className="p-4"><span className={Number(product.stock_quantity) <= Number(product.low_stock_threshold) ? 'font-bold text-red-800' : ''}>{product.stock_quantity}</span></td><td className="p-4"><span className="admin-pill">{product.status}</span></td><td className="p-4"><div className="flex justify-end gap-2"><button type="button" onClick={() => { setEditingProduct(product); setProductForm(toProductForm(product)); }} className="admin-icon-button" aria-label="Modifier"><Pencil className="h-4 w-4" /></button><button type="button" onClick={() => void deleteProduct(product)} className="admin-icon-button text-red-800" aria-label="Supprimer"><Trash2 className="h-4 w-4" /></button></div></td></tr>})}</tbody></table>{visibleProducts.length === 0 && <p className="p-6 text-sm text-[#3A3A3A]">Aucun produit ne correspond aux filtres.</p>}</div>}
       {lowStockProducts.length > 0 && <p className="mt-4 text-sm text-red-800">{lowStockProducts.length} produit(s) ont atteint leur seuil de stock.</p>}
     </>
   );
 
-  const renderOrders = () => <><PanelHeader eyebrow="Commerce" title="Commandes" description="Consultez les commandes enregistrées et suivez leur état sans quitter le portail." />{orders.length === 0 ? <EmptyState title="Aucune commande" body="Les nouvelles commandes synchronisées depuis le site apparaîtront ici." /> : <div className="space-y-4">{orders.map((order) => <article key={order.id} className="border border-[#002141]/15 bg-white p-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><p className="font-semibold text-[#002141]">{order.order_number || order.id}</p><p className="mt-1 text-sm text-[#3A3A3A]">{order.customer_name} · {order.customer_email} · {formatXOF(order.total_xof)}</p></div><label className="text-sm font-semibold text-[#002141]">État<select value={order.status} onChange={(event) => void updateOrder(order, event.target.value)} className="admin-input mt-2 min-w-52">{Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div>{Array.isArray(order.order_items) && <p className="mt-4 border-t border-[#002141]/10 pt-4 text-sm text-[#3A3A3A]">{order.order_items.map((item: AnyRecord) => `${item.quantity} × ${item.product_name}`).join(' · ')}</p>}</article>)}</div>}</>;
+  const renderOrders = () => <>
+    <PanelHeader eyebrow="Commerce" title="Commandes" description="Recherchez, imprimez ou exportez les commandes. Chaque changement est journalisé ; une preuve est requise avant “Livrée”." action={<button type="button" onClick={() => void downloadAdminCsv('/orders/export.csv', 'heritage-commandes.csv').catch((error) => notify(error.message))} className="admin-secondary-button">Exporter CSV</button>} />
+    {orders.length === 0 ? <EmptyState title="Aucune commande" body="Les nouvelles commandes synchronisées depuis le site apparaîtront ici." /> : <><div className="mb-5 flex flex-wrap gap-3 border border-[#002141]/12 bg-white p-4"><label className="text-xs font-semibold">Rechercher<input value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} placeholder="N° commande, client, référence…" className="admin-input mt-1 min-w-64" /></label><label className="text-xs font-semibold">Statut<select value={orderStatusFilter} onChange={(event) => setOrderStatusFilter(event.target.value)} className="admin-input mt-1"><option value="">Tous</option>{Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div><div className="space-y-4">{visibleOrders.map((order) => <article key={order.id} className="border border-[#002141]/15 bg-white p-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><p className="font-semibold text-[#002141]">{order.order_number || order.id}</p><p className="mt-1 text-sm text-[#3A3A3A]">{order.customer_name} · {order.customer_email} · {formatXOF(order.total_xof)}</p><p className="mt-1 text-xs text-[#3A3A3A]">Paiement : {order.payment_method || 'Non renseigné'} {order.payment_reference ? `· ${order.payment_reference}` : ''}</p></div><div className="flex items-end gap-2"><label className="text-sm font-semibold text-[#002141]">État<select value={order.status} onChange={(event) => void updateOrder(order, event.target.value)} className="admin-input mt-2 min-w-52">{Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><button type="button" onClick={() => window.print()} className="admin-secondary-button">Imprimer</button></div></div>{Array.isArray(order.order_items) && <div className="mt-4 border-t border-[#002141]/10 pt-4 text-sm text-[#3A3A3A]"><p className="font-semibold text-[#002141]">Articles</p><p className="mt-1">{order.order_items.map((item: AnyRecord) => `${item.quantity} × ${item.product_name || item.name}`).join(' · ')}</p></div>}<div className="mt-4 grid gap-3 border-t border-[#002141]/10 pt-4 text-xs text-[#3A3A3A] sm:grid-cols-2"><p>Livraison : {order.delivery_reference || order.delivery_proof_url || 'Aucune preuve / référence renseignée'}</p><p>Adresse : {order.shipping_address || order.delivery_address || 'Non renseignée'}</p></div>{Array.isArray(order.status_history) && order.status_history.length > 0 && <details className="mt-4 border-t border-[#002141]/10 pt-4"><summary className="cursor-pointer text-sm font-semibold text-[#002141]">Historique des statuts</summary><ul className="mt-3 space-y-2 text-xs text-[#3A3A3A]">{order.status_history.slice().reverse().map((entry: AnyRecord, index: number) => <li key={`${entry.timestamp}-${index}`}>{new Date(entry.timestamp).toLocaleString('fr-FR')} · {statusLabel[entry.status] || entry.status}{entry.note ? ` — ${entry.note}` : ''}</li>)}</ul></details>}</article>)}</div>{visibleOrders.length === 0 && <EmptyState title="Aucune commande trouvée" body="Modifiez la recherche ou le filtre." />}</>}
+  </>;
 
-  const renderAdministrators = () => <><PanelHeader eyebrow="Accès sécurisé" title="Administrateurs" description="Gérez les comptes actifs et créez des codes à usage unique, valides pendant une heure." action={<button type="button" onClick={() => void generateInvitation()} className="admin-primary-button"><KeyRound className="h-4 w-4" /> Générer un code</button>} />{generatedCode && <div className="mb-6 border border-[#AC854B] bg-[#fffaf0] p-5"><p className="text-sm font-semibold text-[#002141]">Code d’invitation à transmettre une seule fois</p><code className="mt-3 block select-all break-all bg-[#002141] p-4 text-lg font-bold tracking-[0.12em] text-[#D6BB8F]">{generatedCode}</code><p className="mt-3 text-xs text-[#3A3A3A]">Il expirera dans une heure. Conservez-le hors des canaux publics.</p></div>}<div className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]"><section className="border border-[#002141]/15 bg-white"><h2 className="border-b border-[#002141]/10 p-5 font-playfair text-2xl font-semibold">Comptes actifs</h2>{administrators.map((account) => <article key={account.id} className="flex items-center justify-between gap-4 border-b border-[#002141]/10 p-5"><div><p className="font-semibold">{account.full_name || 'Administrateur'}</p><p className="text-sm text-[#3A3A3A]">{account.email}</p></div><button type="button" onClick={async () => { try { await adminRequest(`/administrators/${account.id}`, { method: 'PATCH', body: { is_active: !account.is_active } }); await loadTab('administrators'); notify(account.is_active ? 'Compte désactivé.' : 'Compte réactivé.'); } catch (error) { notify(error instanceof Error ? error.message : 'Action impossible.'); } }} className={account.is_active ? 'admin-secondary-button' : 'admin-primary-button'}>{account.is_active ? 'Désactiver' : 'Réactiver'}</button></article>)}</section><section className="border border-[#002141]/15 bg-white"><h2 className="border-b border-[#002141]/10 p-5 font-playfair text-2xl font-semibold">Codes récents</h2>{invitations.length === 0 ? <p className="p-5 text-sm text-[#3A3A3A]">Aucun code créé.</p> : invitations.map((invitation) => <article key={invitation.id} className="flex items-center justify-between gap-3 border-b border-[#002141]/10 p-5"><div><p className="text-sm font-semibold">{invitation.used_at ? 'Utilisé' : invitation.revoked_at ? 'Révoqué' : new Date(invitation.expires_at) > new Date() ? 'Valide' : 'Expiré'}</p><p className="mt-1 text-xs text-[#3A3A3A]">Expire le {new Date(invitation.expires_at).toLocaleString('fr-FR')}</p></div>{!invitation.used_at && !invitation.revoked_at && new Date(invitation.expires_at) > new Date() && <button type="button" onClick={async () => { await adminRequest(`/invitations/${invitation.id}/revoke`, { method: 'PATCH' }); await loadTab('administrators'); notify('Code révoqué.'); }} className="admin-icon-button text-red-800" aria-label="Révoquer"><Trash2 className="h-4 w-4" /></button>}</article>)}</section></div></>;
+  const renderAdministrators = () => <><PanelHeader eyebrow="Accès sécurisé" title="Administrateurs" description="Gérez les comptes actifs et créez des codes à usage unique, valides pendant une heure." action={<button type="button" onClick={() => void generateInvitation()} className="admin-primary-button"><KeyRound className="h-4 w-4" /> Générer un code</button>} />{generatedCode && <div className="mb-6 border border-[#AC854B] bg-[#fffaf0] p-5"><p className="text-sm font-semibold text-[#002141]">Code d’invitation à transmettre une seule fois</p><code className="mt-3 block select-all break-all bg-[#002141] p-4 text-lg font-bold tracking-[0.12em] text-[#D6BB8F]">{generatedCode}</code><p className="mt-3 text-xs text-[#3A3A3A]">Il expirera dans une heure. Conservez-le hors des canaux publics.</p></div>}<div className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]"><section className="border border-[#002141]/15 bg-white"><h2 className="border-b border-[#002141]/10 p-5 font-playfair text-2xl font-semibold">Comptes administrateur</h2>{administrators.map((account) => <article key={account.id} className="flex items-center justify-between gap-4 border-b border-[#002141]/10 p-5"><div><p className="font-semibold">{account.full_name || 'Administrateur'} · {account.is_active ? 'Actif' : 'Révoqué'}</p><p className="text-sm text-[#3A3A3A]">{account.email}</p><p className="mt-1 text-xs text-[#3A3A3A]">Créé le {account.created_at ? new Date(account.created_at).toLocaleDateString('fr-FR') : '—'} · Dernière connexion : {account.last_signed_in_at ? new Date(account.last_signed_in_at).toLocaleString('fr-FR') : 'Jamais'}</p></div><button type="button" onClick={async () => { try { await adminRequest(`/administrators/${account.id}`, { method: 'PATCH', body: { is_active: !account.is_active } }); await loadTab('administrators'); notify(account.is_active ? 'Compte désactivé.' : 'Compte réactivé.'); } catch (error) { notify(error instanceof Error ? error.message : 'Action impossible.'); } }} className={account.is_active ? 'admin-secondary-button' : 'admin-primary-button'}>{account.is_active ? 'Désactiver' : 'Réactiver'}</button></article>)}</section><section className="border border-[#002141]/15 bg-white"><h2 className="border-b border-[#002141]/10 p-5 font-playfair text-2xl font-semibold">Codes récents</h2>{invitations.length === 0 ? <p className="p-5 text-sm text-[#3A3A3A]">Aucun code créé.</p> : invitations.map((invitation) => <article key={invitation.id} className="flex items-center justify-between gap-3 border-b border-[#002141]/10 p-5"><div><p className="text-sm font-semibold">{invitation.used_at ? 'Utilisé' : invitation.revoked_at ? 'Révoqué' : new Date(invitation.expires_at) > new Date() ? 'Valide' : 'Expiré'}</p><p className="mt-1 text-xs text-[#3A3A3A]">Expire le {new Date(invitation.expires_at).toLocaleString('fr-FR')}</p></div>{!invitation.used_at && !invitation.revoked_at && new Date(invitation.expires_at) > new Date() && <button type="button" onClick={async () => { await adminRequest(`/invitations/${invitation.id}/revoke`, { method: 'PATCH' }); await loadTab('administrators'); notify('Code révoqué.'); }} className="admin-icon-button text-red-800" aria-label="Révoquer"><Trash2 className="h-4 w-4" /></button>}</article>)}</section></div>{auditLogs.length > 0 && <section className="mt-6 border border-[#002141]/15 bg-white"><h2 className="border-b border-[#002141]/10 p-5 font-playfair text-2xl font-semibold">Journal d’activité récent</h2><div className="divide-y divide-[#002141]/10">{auditLogs.map((entry) => <p key={entry.id} className="p-4 text-sm text-[#3A3A3A]">{entry.created_at ? new Date(entry.created_at).toLocaleString('fr-FR') : '—'} · {entry.action} · {entry.entity_type}</p>)}</div></section>}</>;
 
-  const renderUsers = () => <><PanelHeader eyebrow="Comptes clients" title="Utilisateurs" description="Visualisez les comptes personnels créés par les visiteurs et désactivez un accès en cas de besoin." />{users.length === 0 ? <EmptyState title="Aucun utilisateur enregistré" body="Les comptes visiteurs apparaîtront ici après leur inscription." /> : <div className="divide-y divide-[#002141]/10 border border-[#002141]/15 bg-white">{users.map((user) => <article key={user.id} className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold text-[#002141]">{user.full_name || 'Client HERITAGE'}</p><p className="mt-1 text-sm text-[#3A3A3A]">{user.email} {user.phone ? `· ${user.phone}` : ''}</p></div><button type="button" onClick={async () => { try { await adminRequest(`/users/${user.id}`, { method: 'PATCH', body: { is_active: !user.is_active } }); await loadTab('users'); notify(user.is_active ? 'Compte client désactivé.' : 'Compte client réactivé.'); } catch (error) { notify(error instanceof Error ? error.message : 'Action impossible.'); } }} className={user.is_active ? 'admin-secondary-button' : 'admin-primary-button'}>{user.is_active ? 'Désactiver' : 'Réactiver'}</button></article>)}</div>}</>;
+  const renderUsers = () => <>
+    <PanelHeader eyebrow="Comptes clients" title="Utilisateurs" description="Consultez uniquement les coordonnées et l’historique commercial nécessaires à la relation client ; aucune donnée bancaire n’est exposée." action={<button type="button" onClick={() => void downloadAdminCsv('/users/export.csv', 'heritage-utilisateurs.csv').catch((error) => notify(error.message))} className="admin-secondary-button">Exporter CSV</button>} />
+    {users.length === 0 ? <EmptyState title="Aucun utilisateur enregistré" body="Les comptes visiteurs apparaîtront ici après leur inscription." /> : <><label className="mb-5 block max-w-sm text-xs font-semibold">Rechercher<input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Nom, e-mail ou téléphone…" className="admin-input mt-1" /></label><div className="divide-y divide-[#002141]/10 border border-[#002141]/15 bg-white">{visibleUsers.map((user) => <article key={user.id} className="flex flex-col gap-4 p-5"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold text-[#002141]">{user.full_name || 'Client HERITAGE'}</p><p className="mt-1 text-sm text-[#3A3A3A]">{user.email} {user.phone ? `· ${user.phone}` : ''}</p><p className="mt-1 text-xs text-[#3A3A3A]">Inscrit le {user.created_at ? new Date(user.created_at).toLocaleDateString('fr-FR') : '—'} · {user.order_count || 0} commande(s) · {formatXOF(user.total_spent_xof)}</p></div><button type="button" onClick={async () => { try { await adminRequest(`/users/${user.id}`, { method: 'PATCH', body: { is_active: !user.is_active } }); await loadTab('users'); notify(user.is_active ? 'Compte client désactivé.' : 'Compte client réactivé.'); } catch (error) { notify(error instanceof Error ? error.message : 'Action impossible.'); } }} className={user.is_active ? 'admin-secondary-button' : 'admin-primary-button'}>{user.is_active ? 'Désactiver' : 'Réactiver'}</button></div><details className="border-t border-[#002141]/10 pt-3"><summary className="cursor-pointer text-sm font-semibold text-[#002141]">Coordonnées et commandes</summary><div className="mt-3 grid gap-3 text-xs text-[#3A3A3A] sm:grid-cols-2"><p>Adresse : {user.delivery_address || user.commune || 'Non renseignée'}</p><p>Statut du compte : {user.is_active ? 'Actif' : 'Désactivé'}</p>{(user.orders || []).map((order: AnyRecord) => <button type="button" key={order.id} onClick={() => selectTab('orders')} className="text-left hover:text-[#AC854B]">{order.order_number || order.id} · {formatXOF(order.total_xof)} · {statusLabel[order.status] || order.status}</button>)}</div></details></article>)}</div>{visibleUsers.length === 0 && <EmptyState title="Aucun utilisateur trouvé" body="Modifiez votre recherche." />}</>}
+  </>;
 
-  const renderMedia = () => <><PanelHeader eyebrow="Fichiers de la boutique" title="Galerie média" description="Ajoutez et retirez les images destinées aux fiches produit. Formats JPEG, PNG, WebP ou AVIF, 10 Mo maximum." action={<label className="admin-primary-button cursor-pointer"><Plus className="h-4 w-4" /> Ajouter une image<input type="file" accept="image/jpeg,image/png,image/webp,image/avif" className="sr-only" onChange={uploadMedia} /></label>} />{media.length === 0 ? <EmptyState title="La galerie est vide" body="Ajoutez la première image produit depuis votre appareil." /> : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{media.map((asset) => <article key={asset.id} className="overflow-hidden border border-[#002141]/15 bg-white"><img src={asset.public_url} alt={asset.alt_text || asset.file_name} className="h-44 w-full object-cover" /><div className="flex items-center justify-between gap-3 p-4"><p className="truncate text-sm font-semibold text-[#002141]">{asset.file_name}</p><button type="button" onClick={async () => { if (!window.confirm('Supprimer cette image définitivement ?')) return; try { await adminRequest(`/media/${asset.id}`, { method: 'DELETE' }); await loadTab('media'); notify('Image supprimée.'); } catch (error) { notify(error instanceof Error ? error.message : 'Suppression impossible.'); } }} className="admin-icon-button text-red-800" aria-label="Supprimer l’image"><Trash2 className="h-4 w-4" /></button></div></article>)}</div>}</>;
+  const renderMedia = () => <><PanelHeader eyebrow="Fichiers de la boutique" title="Galerie média" description="Ajoutez plusieurs images, renseignez leur texte alternatif, puis organisez-les par dossier ou tag. Les images générées par IA sont refusées." action={<label className="admin-primary-button cursor-pointer"><Plus className="h-4 w-4" /> Ajouter des images<input type="file" multiple accept="image/jpeg,image/png,image/webp,image/avif" className="sr-only" onChange={uploadMedia} /></label>} />{media.length === 0 ? <EmptyState title="La galerie est vide" body="Ajoutez la première image produit depuis votre appareil." /> : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{media.map((asset) => <article key={asset.id} className="overflow-hidden border border-[#002141]/15 bg-white"><img src={asset.public_url} alt={asset.alt_text || asset.file_name} className="h-44 w-full object-cover" /><div className="space-y-3 p-4"><div><p className="truncate text-sm font-semibold text-[#002141]">{asset.file_name}</p><p className="mt-1 truncate text-xs text-[#3A3A3A]">{asset.folder || 'general'} · {asset.alt_text}</p>{asset.usage?.length > 0 && <p className="mt-1 text-[11px] text-[#AC854B]">Utilisée : {asset.usage.map((usage: AnyRecord) => `${usage.type} ${usage.label}`).join(', ')}</p>}</div><div className="flex justify-end gap-2"><button type="button" onClick={async () => { const alt_text = window.prompt('Texte alternatif :', asset.alt_text || ''); if (!alt_text?.trim()) return; const folder = window.prompt('Dossier :', asset.folder || 'general') || 'general'; const tags = window.prompt('Tags séparés par des virgules :', Array.isArray(asset.tags) ? asset.tags.join(', ') : ''); try { await adminRequest(`/media/${asset.id}`, { method: 'PATCH', body: { alt_text: alt_text.trim(), folder, tags: JSON.stringify((tags || '').split(',').map((tag) => tag.trim()).filter(Boolean)), product_id: asset.product_id || null, sort_order: asset.sort_order || 0 } }); await loadTab('media'); notify('Média mis à jour.'); } catch (error) { notify(error instanceof Error ? error.message : 'Mise à jour impossible.'); } }} className="admin-icon-button" aria-label="Modifier le média"><Pencil className="h-4 w-4" /></button><button type="button" onClick={async () => { if (!window.confirm(asset.usage?.length ? 'Cette image est utilisée. La suppression sera refusée tant qu’elle est liée à un contenu. Continuer ?' : 'Supprimer cette image définitivement ?')) return; try { await adminRequest(`/media/${asset.id}`, { method: 'DELETE' }); await loadTab('media'); notify('Image supprimée.'); } catch (error) { notify(error instanceof Error ? error.message : 'Suppression impossible.'); } }} className="admin-icon-button text-red-800" aria-label="Supprimer l’image"><Trash2 className="h-4 w-4" /></button></div></div></article>)}</div>}</>;
 
   const renderCoordinates = () => {
-    const settings = siteSettings || { business_name: 'HERITAGE', social_links: {} };
-    return <><PanelHeader eyebrow="Informations de la maison" title="Coordonnées" description="Centralisez les contacts et liens sociaux affichés sur le footer, les pages de contact et les autres emplacements prévus." /> <form onSubmit={async (event) => { event.preventDefault(); try { await adminRequest('/site-settings', { method: 'PATCH', body: { ...settings, social_links: typeof settings.social_links === 'string' ? settings.social_links : JSON.stringify(settings.social_links || {}) } }); await loadTab('coordinates'); notify('Coordonnées enregistrées.'); } catch (error) { notify(error instanceof Error ? error.message : 'Enregistrement impossible.'); } }} className="max-w-3xl border border-[#002141]/15 bg-white p-5 sm:p-7"><div className="grid gap-5 md:grid-cols-2">{[['business_name','Nom de la boutique'],['email','E-mail'],['phone','Téléphone'],['address','Adresse'],['hours','Horaires']].map(([name,label]) => <label key={name} className="text-sm font-semibold text-[#002141]">{label}<input value={settings[name] || ''} onChange={(event) => setSiteSettings((current) => ({ ...(current || {}), [name]: event.target.value }))} className="admin-input mt-2" /></label>)}<label className="md:col-span-2 text-sm font-semibold text-[#002141]">Liens sociaux, au format JSON<textarea value={typeof settings.social_links === 'string' ? settings.social_links : JSON.stringify(settings.social_links || {}, null, 2)} onChange={(event) => setSiteSettings((current) => ({ ...(current || {}), social_links: event.target.value }))} className="admin-input mt-2 min-h-36 font-mono text-xs" placeholder={'{"facebook":"https://…","instagram":"https://…","tiktok":"https://…","x":"https://…","youtube":"https://…"}'} /></label></div><button type="submit" className="admin-primary-button mt-7">Enregistrer les coordonnées</button></form></>;
+    const settings = siteSettings || { business_name: 'HERITAGE', social_links: {}, footer_notices: [] };
+    const socials = typeof settings.social_links === 'string' ? (() => { try { return JSON.parse(settings.social_links); } catch { return {}; } })() : (settings.social_links || {});
+    const notices = typeof settings.footer_notices === 'string' ? (() => { try { return JSON.parse(settings.footer_notices); } catch { return []; } })() : (settings.footer_notices || []);
+    const setSocial = (network: string, value: string) => setSiteSettings((current) => ({ ...(current || {}), social_links: { ...(typeof current?.social_links === 'object' ? current.social_links : {}), [network]: value } }));
+    return <>
+      <PanelHeader eyebrow="Informations de la maison" title="Coordonnées" description="Une seule source Supabase pour le footer, Contact, WhatsApp et les réseaux sociaux." />
+      <form onSubmit={async (event) => {
+        event.preventDefault();
+        try {
+          await adminRequest('/site-settings', { method: 'PATCH', body: { ...settings, social_links: JSON.stringify(socials), footer_notices: JSON.stringify(notices) } });
+          await loadTab('coordinates');
+          notify('Coordonnées enregistrées.');
+        } catch (error) { notify(error instanceof Error ? error.message : 'Enregistrement impossible.'); }
+      }} className="max-w-4xl border border-[#002141]/15 bg-white p-5 sm:p-7">
+        <div className="grid gap-5 md:grid-cols-2">
+          {[['business_name','Nom de la boutique'],['email','E-mail'],['phone','Téléphone'],['whatsapp_phone','Numéro WhatsApp'],['address','Adresse'],['hours','Horaires']].map(([name,label]) => <label key={name} className="text-sm font-semibold text-[#002141]">{label}<input type={name === 'email' ? 'email' : name.includes('phone') ? 'tel' : 'text'} value={settings[name] || ''} onChange={(event) => setSiteSettings((current) => ({ ...(current || {}), [name]: event.target.value }))} className="admin-input mt-2" /></label>)}
+          <fieldset className="md:col-span-2 border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Réseaux sociaux</legend><div className="mt-2 grid gap-4 sm:grid-cols-2">{[['facebook','Facebook'],['instagram','Instagram'],['tiktok','TikTok'],['x','X'],['youtube','YouTube']].map(([network,label]) => <label key={network} className="text-sm font-semibold text-[#002141]">{label}<input type="url" value={socials[network] || ''} onChange={(event) => setSocial(network, event.target.value)} placeholder="https://…" className="admin-input mt-2" /></label>)}</div></fieldset>
+          <fieldset className="md:col-span-2 border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Informations mises en avant dans le footer</legend><p className="mb-3 text-xs leading-relaxed text-[#3A3A3A]">Laissez vide tant que l’information (authenticité, livraison ou garantie) n’est pas validée par la Maison.</p>{[0, 1, 2].map((index) => <div key={index} className="mb-3 grid gap-3 sm:grid-cols-[1fr_2fr]"><input value={notices[index]?.title || ''} onChange={(event) => setSiteSettings((current) => { const next = Array.isArray(current?.footer_notices) ? [...current.footer_notices] : []; next[index] = { ...(next[index] || {}), title: event.target.value, body: next[index]?.body || '' }; return { ...(current || {}), footer_notices: next }; })} placeholder={`Titre ${index + 1}`} className="admin-input" /><input value={notices[index]?.body || ''} onChange={(event) => setSiteSettings((current) => { const next = Array.isArray(current?.footer_notices) ? [...current.footer_notices] : []; next[index] = { ...(next[index] || {}), title: next[index]?.title || '', body: event.target.value }; return { ...(current || {}), footer_notices: next }; })} placeholder="Texte validé" className="admin-input" /></div>)}</fieldset>
+          <label className="md:col-span-2 flex min-h-12 items-center gap-3 border border-[#002141]/15 px-4 text-sm font-semibold text-[#002141]"><input type="checkbox" checked={Boolean(settings.structured_data_enabled)} onChange={(event) => setSiteSettings((current) => ({ ...(current || {}), structured_data_enabled: event.target.checked }))} className="h-4 w-4 accent-[#AC854B]" /> Activer les données structurées de la Maison une fois les coordonnées validées</label>
+        </div>
+        <button type="submit" className="admin-primary-button mt-7">Enregistrer les coordonnées</button>
+      </form>
+    </>;
   };
 
   let content: React.ReactNode = renderDashboard();
@@ -612,12 +796,18 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   return (
     <div className="min-h-screen bg-[#F5F3EF] text-[#002141]">
       {sidebarOpen && <button type="button" className="fixed inset-0 z-40 bg-[#002141]/60 lg:hidden" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu" />}
-      <aside className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-[#002141] text-[#FAF9F7] shadow-2xl transition-transform lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="flex items-center justify-between border-b border-[#FAF9F7]/10 p-5"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center bg-[#AC854B] font-playfair text-xl font-bold text-[#002141]">H</span><div><p className="brand-wordmark text-sm">HERITAGE</p><p className="brand-descriptor mt-1 text-[8px] text-[#D6BB8F]">ADMINISTRATION</p></div></div><button type="button" onClick={() => setSidebarOpen(false)} className="admin-sidebar-icon lg:hidden" aria-label="Fermer le menu"><X className="h-5 w-5" /></button></div>
-        <nav className="flex-1 overflow-y-auto p-3" aria-label="Navigation administration">{NAVIGATION.map((item, index) => { const Icon = item.icon; const previous = NAVIGATION[index - 1]; return <React.Fragment key={item.id}>{item.section && <p className={`px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[#D6BB8F]/80 ${previous ? 'pt-6' : 'pt-3'}`}>{item.section}</p>}<button type="button" onClick={() => selectTab(item.id)} className={`flex min-h-11 w-full items-center gap-3 px-3 text-left text-sm font-semibold transition ${activeTab === item.id ? 'bg-[#AC854B] text-[#002141]' : 'text-[#FAF9F7]/82 hover:bg-[#FAF9F7]/10 hover:text-[#FAF9F7]'}`}><Icon className="h-4 w-4" aria-hidden="true" />{item.label}</button></React.Fragment>; })}</nav>
-        <div className="border-t border-[#FAF9F7]/10 p-4"><p className="truncate text-sm font-semibold">{admin.full_name || 'Administrateur'}</p><p className="mt-1 truncate text-xs text-[#FAF9F7]/60">{admin.email}</p><button type="button" onClick={() => void logout()} className="mt-4 flex min-h-11 items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-[#D6BB8F] hover:text-[#FAF9F7]"><LogOut className="h-4 w-4" /> Déconnexion</button></div>
+      <aside className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-[#002141] text-[#FAF9F7] shadow-2xl transition-[width,transform] duration-200 ease-out lg:translate-x-0 ${sidebarCollapsed ? 'lg:w-20' : 'lg:w-72'} ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className={`flex items-center justify-between border-b border-[#FAF9F7]/10 p-5 ${sidebarCollapsed ? 'lg:justify-center lg:px-3' : ''}`}>
+          <a href="/" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="flex min-w-0 items-center gap-3 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D6BB8F]" aria-label="HERITAGE — retourner à l'accueil">
+            {sidebarCollapsed ? <span className="relative hidden h-10 w-10 overflow-hidden lg:block" aria-label="Monogramme HERITAGE"><img src="/assets/logo-white.svg" alt="" className="absolute -left-[60px] top-0 h-auto w-40 max-w-none" /></span> : <img src="/assets/logo-white.svg" alt="HERITAGE — Montres et Accessoires" className="h-auto w-40 object-contain object-left" />}
+          </a>
+          <button type="button" onClick={toggleSidebar} className="admin-sidebar-icon hidden lg:inline-flex" aria-label={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'} aria-expanded={!sidebarCollapsed} title={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'}><PanelLeftOpen className={`h-5 w-5 transition-transform duration-200 ${sidebarCollapsed ? 'rotate-180' : ''}`} /></button>
+          <button type="button" onClick={() => setSidebarOpen(false)} className="admin-sidebar-icon lg:hidden" aria-label="Fermer le menu"><X className="h-5 w-5" /></button>
+        </div>
+        <nav className="flex-1 overflow-y-auto p-3" aria-label="Navigation administration">{NAVIGATION.map((item, index) => { const Icon = item.icon; const previous = NAVIGATION[index - 1]; return <React.Fragment key={item.id}>{item.section && <p className={`px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[#D6BB8F]/80 ${previous ? 'pt-6' : 'pt-3'} ${sidebarCollapsed ? 'lg:sr-only' : ''}`}>{item.section}</p>}<button type="button" onClick={() => selectTab(item.id)} title={sidebarCollapsed ? item.label : undefined} className={`flex min-h-11 w-full items-center gap-3 px-3 text-left text-sm font-semibold transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#D6BB8F] ${sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''} ${activeTab === item.id ? 'bg-[#AC854B] text-[#002141]' : 'text-[#FAF9F7]/82 hover:bg-[#FAF9F7]/10 hover:text-[#FAF9F7]'}`}><Icon className="h-4 w-4 shrink-0" aria-hidden="true" /><span className={sidebarCollapsed ? 'lg:sr-only' : ''}>{item.label}</span></button></React.Fragment>; })}</nav>
+        <div className={`border-t border-[#FAF9F7]/10 p-4 ${sidebarCollapsed ? 'lg:px-3' : ''}`}><div className={sidebarCollapsed ? 'lg:sr-only' : ''}><p className="truncate text-sm font-semibold">{admin.full_name || 'Administrateur'}</p><p className="mt-1 truncate text-xs text-[#FAF9F7]/60">{admin.email}</p></div><button type="button" onClick={() => void logout()} title={sidebarCollapsed ? 'Déconnexion' : undefined} className={`mt-4 flex min-h-11 items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-[#D6BB8F] transition-colors hover:text-[#FAF9F7] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D6BB8F] ${sidebarCollapsed ? 'lg:mx-auto lg:mt-0' : ''}`}><LogOut className="h-4 w-4 shrink-0" /><span className={sidebarCollapsed ? 'lg:sr-only' : ''}>Déconnexion</span></button></div>
       </aside>
-      <div className="lg:pl-72"><header className="sticky top-0 z-30 flex min-h-18 items-center justify-between border-b border-[#002141]/10 bg-[#F5F3EF]/95 px-4 py-3 backdrop-blur sm:px-7"><div className="flex items-center gap-3"><button type="button" onClick={() => setSidebarOpen(true)} className="admin-icon-button lg:hidden" aria-label="Ouvrir le menu"><Menu className="h-5 w-5" /></button><div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#AC854B]">Portail privé</p><p className="text-sm font-semibold text-[#002141]">{NAVIGATION.find((item) => item.id === activeTab)?.label}</p></div></div><button type="button" onClick={() => navigate('/')} className="admin-secondary-button hidden sm:inline-flex"><PanelLeftClose className="h-4 w-4" /> Voir la boutique</button></header>
+      <div className={`transition-[padding] duration-200 ease-out ${sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-72'}`}><header className="sticky top-0 z-30 flex min-h-18 items-center justify-between border-b border-[#002141]/10 bg-[#F5F3EF]/95 px-4 py-3 backdrop-blur sm:px-7"><div className="flex items-center gap-3"><button type="button" onClick={() => setSidebarOpen(true)} className="admin-icon-button lg:hidden" aria-label="Ouvrir le menu"><Menu className="h-5 w-5" /></button><button type="button" onClick={toggleSidebar} className="admin-icon-button hidden lg:inline-flex" aria-label={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'} title={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'}><PanelLeftOpen className={`h-5 w-5 transition-transform duration-200 ${sidebarCollapsed ? 'rotate-180' : ''}`} /></button><div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#AC854B]">Portail privé</p><p className="text-sm font-semibold text-[#002141]">{NAVIGATION.find((item) => item.id === activeTab)?.label}</p></div></div><button type="button" onClick={() => navigate('/')} className="admin-secondary-button hidden sm:inline-flex"><PanelLeftClose className="h-4 w-4" /> Voir la boutique</button></header>
         <main className="px-4 py-7 sm:px-7 lg:px-10">{loading ? <div className="flex min-h-80 items-center justify-center text-sm text-[#3A3A3A]"><LoaderCircle className="mr-3 h-5 w-5 animate-spin text-[#AC854B]" /> Chargement des données sécurisées…</div> : content}</main>
       </div>
       {notice && <div role="status" className="fixed bottom-5 right-5 z-[60] max-w-sm border border-[#D6BB8F] bg-[#002141] px-4 py-3 text-sm text-[#FAF9F7] shadow-xl"><CheckCircle2 className="mr-2 inline h-4 w-4 text-[#D6BB8F]" />{notice}</div>}

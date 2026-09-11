@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { PRODUCTS, formatXOF } from '../../data/products';
+import { usePublicContent, xof as formatXOF } from '../../lib/public-content';
 import { Product } from '../../types';
 import {
   Heart,
@@ -27,12 +27,13 @@ export const WishlistView: React.FC<WishlistViewProps> = ({ navigate }) => {
     addToCart,
     setCartToast
   } = useStore();
+  const { products } = usePublicContent();
 
   const [copiedLink, setCopiedLink] = useState(false);
   const [addedItems, setAddedItems] = useState<Record<string, boolean>>({});
 
   // Filter products that are in the user's wishlist
-  const wishlistProducts = PRODUCTS.filter((product) => wishlist.includes(product.id));
+  const wishlistProducts = products.filter((product) => wishlist.includes(product.id));
 
   // Quick add single item to cart
   const handleAddToCart = (product: Product) => {

@@ -1,11 +1,18 @@
 import React from 'react';
 import { ArrowRight } from 'lucide-react';
+import { usePublicContent } from '../../lib/public-content';
 
 interface CategoriesSectionProps {
   navigate: (route: string) => void;
 }
 
 export const CategoriesSection: React.FC<CategoriesSectionProps> = ({ navigate }) => {
+  const { products } = usePublicContent();
+  const watches = products.filter((product) => product.category === 'montres');
+  const featuredWatch = watches[0];
+
+  // Nothing is substituted when Supabase has no published watch: the section
+  // remains a catalogue entry point, without a fictitious product image/count.
   return (
     <section className="py-20 md:py-28 bg-[#FAF9F7] relative overflow-hidden">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -54,14 +61,14 @@ export const CategoriesSection: React.FC<CategoriesSectionProps> = ({ navigate }
               className="relative aspect-4/3 overflow-hidden bg-[#FAF9F7] border border-[#002141]/5 group cursor-pointer"
               onClick={() => navigate('/montres')}
             >
-              <img
-                src="/assets/products/tissot-le-locle.jpg"
-                alt="Montres HERITAGE - Calibre suisse"
+              {featuredWatch?.primaryImage && <img
+                src={featuredWatch.primaryImage}
+                alt={featuredWatch.name}
                 className="w-full h-full object-contain p-6 group-hover:scale-105 transition-transform duration-500"
-              />
-              <div className="absolute bottom-4 right-4 bg-[#002141]/80 text-[#FAF9F7] px-3 py-1 text-[11px] font-semibold tracking-wider uppercase">
-                8 Références Publiées
-              </div>
+              />}
+              {watches.length > 0 && <div className="absolute bottom-4 right-4 bg-[#002141]/80 text-[#FAF9F7] px-3 py-1 text-[11px] font-semibold tracking-wider uppercase">
+                {watches.length} RÉFÉRENCE{watches.length > 1 ? 'S' : ''} PUBLIÉE{watches.length > 1 ? 'S' : ''}
+              </div>}
             </div>
           </div>
         </div>

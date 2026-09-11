@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { MessageCircle, Phone, Mail, MapPin, Clock, Send, CheckCircle2 } from 'lucide-react';
+import { usePublicContent } from '../../lib/public-content';
 
 interface ContactViewProps {
   navigate: (route: string) => void;
 }
 
 export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
+  const { siteSettings, faqs, reviews } = usePublicContent();
   const [form, setForm] = useState({
     name: '',
     email: '',
@@ -15,11 +17,27 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
   });
 
   const [submitted, setSubmitted] = useState(false);
+  const [submissionError, setSubmissionError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitted(true);
+    setSubmissionError('');
+    try {
+      const response = await fetch('/api/public/contact-messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name: form.name, email: form.email, phone: form.phone, subject: form.subject, message: form.message })
+      });
+      if (!response.ok) throw new Error();
+      setSubmitted(true);
+    } catch {
+      setSubmissionError('Votre message ne peut pas être transmis pour le moment. Veuillez réessayer.');
+    }
   };
+  const whatsappNumber = (siteSettings?.whatsapp_phone || siteSettings?.phone || '').replace(/\D/g, '');
+  const contactFaqs = faqs.filter((faq) => faq.placements.includes('contact'));
+  const featuredReviews = reviews.filter((review) => review.is_featured_contact).slice(0, 3);
+  const socialLinks = Object.entries(siteSettings?.social_links || {}).filter(([, url]) => Boolean(url));
 
   return (
     <div className="bg-[#FAF9F7] min-h-screen pt-24 pb-24">
@@ -65,7 +83,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                   </div>
                   <div>
                     <strong className="text-[#002141] block mb-0.5">Adresse</strong>
-                    <span>Maison HERITAGE &middot; Yopougon, Abidjan, Côte d'Ivoire</span>
+                    <span>{siteSettings?.address || ''}</span>
                   </div>
                 </div>
 
@@ -75,8 +93,8 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                   </div>
                   <div>
                     <strong className="text-[#002141] block mb-0.5">Téléphone & WhatsApp</strong>
-                    <a href="tel:+2250707181560" className="hover:text-[#AC854B] transition-colors">
-                      +225 07 07 18 15 60
+                    <a href={siteSettings?.phone ? `tel:${siteSettings.phone.replace(/\s/g, '')}` : undefined} className="hover:text-[#AC854B] transition-colors">
+                      {siteSettings?.phone || ''}
                     </a>
                   </div>
                 </div>
@@ -88,10 +106,10 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                   <div>
                     <strong className="text-[#002141] block mb-0.5">Courriel direct</strong>
                     <a
-                      href="mailto:contact@heritage-abidjan.ci"
+                      href={siteSettings?.email ? `mailto:${siteSettings.email}` : undefined}
                       className="hover:text-[#AC854B] transition-colors"
                     >
-                      contact@heritage-abidjan.ci
+                      {siteSettings?.email || ''}
                     </a>
                   </div>
                 </div>
@@ -102,17 +120,14 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                   </div>
                   <div>
                     <strong className="text-[#002141] block mb-0.5">Horaires de conseil</strong>
-                    <span>Lundi au Samedi : 09h00 – 19h00 (GMT)</span>
-                    <span className="text-[11px] text-[#3A3A3A]/70 block mt-0.5">
-                      Accueil à Yopougon sur rendez-vous pour les remises en main propre.
-                    </span>
+                    <span>{siteSettings?.hours || ''}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-[#002141]/10">
+              {whatsappNumber && <div className="pt-4 border-t border-[#002141]/10">
                 <a
-                  href="https://wa.me/2250707181560?text=Bonjour%20HERITAGE%2C%20je%20souhaite%20un%20conseil%20au%20sujet%20de%20vos%20montres."
+                  href={`https://wa.me/${whatsappNumber}?text=${encodeURIComponent('Bonjour HERITAGE, je souhaite un conseil au sujet de vos montres.')}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="premium-cta w-full py-3.5 px-6 bg-[#25D366] hover:bg-[#20b858] text-white text-xs font-bold uppercase tracking-[0.16em] flex items-center justify-center gap-2.5 shadow-sm"
@@ -120,7 +135,8 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                   <MessageCircle className="w-4 h-4" />
                   <span>CONVERSATION WHATSAPP IMMÉDIATE</span>
                 </a>
-              </div>
+              </div>}
+              {socialLinks.length > 0 && <div className="pt-4 border-t border-[#002141]/10"><p className="text-xs font-semibold uppercase tracking-wider text-[#002141]">Retrouvez HERITAGE</p><div className="mt-3 flex flex-wrap gap-3">{socialLinks.map(([network, url]) => <a key={network} href={url} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-[#AC854B] hover:text-[#002141] transition-colors">{network}</a>)}</div></div>}
             </div>
           </div>
 
@@ -135,8 +151,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                   Message transmis avec succès
                 </h3>
                 <p className="text-xs sm:text-sm text-[#3A3A3A] max-w-md mx-auto leading-relaxed">
-                  Merci {form.name}. Votre demande a été attribuée à un conseiller de la Maison
-                  HERITAGE à Abidjan. Vous recevrez une réponse sous 2 heures ouvrées.
+                  Merci {form.name}. Votre demande a bien été enregistrée et sera examinée par la Maison HERITAGE.
                 </p>
                 <button
                   type="button"
@@ -243,10 +258,25 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                   <Send className="w-4 h-4" />
                   <span>TRANSMETTRE MON MESSAGE</span>
                 </button>
+                {submissionError && <p role="alert" className="text-xs text-red-800">{submissionError}</p>}
               </form>
             )}
           </div>
         </div>
+        {(featuredReviews.length > 0 || contactFaqs.length > 0) && <div className="mt-16 grid gap-8 lg:grid-cols-2">
+          {featuredReviews.length > 0 && <section className="premium-section-card bg-white border border-[#002141]/10 p-6 sm:p-8">
+            <h2 className="font-playfair text-xl font-bold text-[#002141]">Avis de clients</h2>
+            <div className="mt-5 space-y-5">
+              {featuredReviews.map((review) => <article key={review.id} className="border-t border-[#002141]/10 pt-4 text-sm text-[#3A3A3A]"><p className="font-semibold text-[#002141]">{review.author_name} · {review.rating}/5</p><p className="mt-2 leading-relaxed">{review.body}</p>{review.merchant_response && <p className="mt-2 border-l-2 border-[#AC854B] pl-3 text-xs">HERITAGE : {review.merchant_response}</p>}</article>)}
+            </div>
+          </section>}
+          {contactFaqs.length > 0 && <section className="premium-section-card bg-white border border-[#002141]/10 p-6 sm:p-8">
+            <h2 className="font-playfair text-xl font-bold text-[#002141]">Questions fréquentes</h2>
+            <div className="mt-5 divide-y divide-[#002141]/10">
+              {contactFaqs.map((faq) => <details key={faq.id} className="py-4"><summary className="cursor-pointer font-semibold text-[#002141]">{faq.question}</summary><div className="mt-3 text-sm leading-relaxed text-[#3A3A3A]" dangerouslySetInnerHTML={{ __html: faq.answer_html }} /></details>)}
+            </div>
+          </section>}
+        </div>}
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import React from 'react';
 import { MessageCircle } from 'lucide-react';
+import { usePublicContent } from '../../lib/public-content';
 
 interface WhatsAppButtonProps {
   currentRoute?: string;
@@ -7,6 +8,7 @@ interface WhatsAppButtonProps {
 }
 
 export const WhatsAppButton: React.FC<WhatsAppButtonProps> = ({ currentRoute = '', activeReference }) => {
+  const { siteSettings } = usePublicContent();
   const route = currentRoute || (typeof window !== 'undefined' ? window.location.pathname : '');
 
   // Never display floating WhatsApp button on checkout or cart to prevent covering critical payment CTAs
@@ -22,7 +24,9 @@ export const WhatsAppButton: React.FC<WhatsAppButtonProps> = ({ currentRoute = '
     ? `Bonjour HERITAGE, je souhaite un conseil au sujet de la référence ${activeReference}.`
     : 'Bonjour HERITAGE, je souhaite échanger avec un conseiller au sujet de votre sélection de montres.';
 
-  const encodedUrl = `https://wa.me/2250707181560?text=${encodeURIComponent(messageText)}`;
+  const whatsappNumber = (siteSettings?.whatsapp_phone || siteSettings?.phone || '').replace(/\D/g, '');
+  if (!whatsappNumber) return null;
+  const encodedUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(messageText)}`;
 
   return (
     <div className="fixed bottom-6 right-6 z-30">

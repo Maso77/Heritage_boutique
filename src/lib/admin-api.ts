@@ -36,6 +36,24 @@ export async function adminRequest<T>(path: string, options: RequestOptions = {}
   return payload as T;
 }
 
+export async function downloadAdminCsv(path: string, fileName: string) {
+  const token = await getAccessToken();
+  if (!token) throw new Error('Votre session administrateur a expiré.');
+  const response = await fetch(`/api/admin${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || 'L’export est indisponible.');
+  }
+  const objectUrl = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export async function getAdminSession(): Promise<AdminSession | null> {
   const token = await getAccessToken();
   if (!token) return null;

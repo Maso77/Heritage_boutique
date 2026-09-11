@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Product } from '../../types';
-import { formatXOF } from '../../data/products';
+import { usePublicContent, xof as formatXOF } from '../../lib/public-content';
 import { useStore } from '../../context/StoreContext';
 import {
   ShieldCheck,
@@ -23,6 +23,7 @@ interface ProductDetailViewProps {
 
 export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, navigate }) => {
   const { addToCart, isInWishlist, toggleWishlist } = useStore();
+  const { siteSettings } = usePublicContent();
   const isFavorite = isInWishlist(product.id);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [quantity, setQuantity] = useState(1);
@@ -43,7 +44,13 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, n
   };
 
   const whatsappMessage = `Bonjour HERITAGE, je souhaite un conseil au sujet de la pièce : ${product.name} (Réf. ${product.reference}).`;
-  const whatsappUrl = `https://wa.me/2250707181560?text=${encodeURIComponent(whatsappMessage)}`;
+  const whatsappNumber = (siteSettings?.whatsapp_phone || siteSettings?.phone || '').replace(/\D/g, '');
+  const whatsappUrl = whatsappNumber ? `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(whatsappMessage)}` : '';
+  const applicableInformation = [
+    { title: 'Provenance de la pièce', value: product.provenanceSummary, icon: ShieldCheck },
+    { title: 'Garantie et service', value: product.warrantySummary, icon: Clock },
+    { title: 'Livraison et retours', value: product.deliverySummary, icon: Truck }
+  ].filter((item) => Boolean(item.value?.trim()));
 
   return (
     <div className="bg-[#FAF9F7] min-h-screen pt-24 pb-24">
@@ -258,7 +265,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, n
               </button>
 
               {/* Secondary CTA: WhatsApp Conseil */}
-              <a
+              {whatsappUrl && <a
                 href={whatsappUrl}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -267,7 +274,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, n
               >
                 <MessageCircle className="w-4 h-4 text-[#AC854B]" />
                 <span>ÉCHANGER AVEC UN CONSEILLER</span>
-              </a>
+              </a>}
 
               {/* Secondary Actions: Wishlist & Share */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -303,25 +310,12 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, n
             </div>
 
             {/* Reassurance strip */}
-            <div className="pt-6 border-t border-[#002141]/10 space-y-3 text-xs text-[#3A3A3A]">
-              <div className="flex items-center gap-3">
-                <ShieldCheck className="w-4 h-4 text-[#AC854B] flex-shrink-0" />
-                <span>Pièce suisse originale garantie avec papiers et coffret d'origine.</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <Clock className="w-4 h-4 text-[#AC854B] flex-shrink-0" />
-                <span>Garantie de 2 ans sur le mécanisme horloger avec prise en charge locale.</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <Truck className="w-4 h-4 text-[#AC854B] flex-shrink-0" />
-                <span>Remise en main propre sécurisée à Abidjan ou expédition sous scellé.</span>
-              </div>
-            </div>
+            {applicableInformation.length > 0 && <div className="pt-6 border-t border-[#002141]/10 space-y-3 text-xs text-[#3A3A3A]">{applicableInformation.map((item) => { const Icon = item.icon; return <div key={item.title} className="flex items-center gap-3"><Icon className="w-4 h-4 text-[#AC854B] flex-shrink-0" /><span>{item.value}</span></div>; })}</div>}
           </div>
         </div>
 
         {/* Value Story Section (Récit de valeur) */}
-        <div className="bg-white border border-[#002141]/10 p-8 sm:p-12 mb-16">
+        {(product.valueStoryTitle || product.valueStoryText) && <div className="bg-white border border-[#002141]/10 p-8 sm:p-12 mb-16">
           <div className="max-w-3xl">
             <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-[#AC854B] block mb-2">
               RÉCIT DE VALEUR
@@ -333,7 +327,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, n
               {product.valueStoryText}
             </p>
           </div>
-        </div>
+        </div>}
 
         {/* Horological Specifications Table */}
         <div className="bg-white border border-[#002141]/10 p-8 sm:p-12 mb-16">
@@ -377,37 +371,10 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, n
         </div>
 
         {/* Applicable Conditions Section (Provenance, Garantie, Livraison) */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-16">
-          <div className="bg-white border border-[#002141]/10 p-6">
-            <h3 className="font-playfair text-base font-bold text-[#002141] mb-2">
-              Provenance de la pièce
-            </h3>
-            <p className="text-xs text-[#3A3A3A] leading-relaxed">
-              {product.provenanceSummary}
-            </p>
-          </div>
-
-          <div className="bg-white border border-[#002141]/10 p-6">
-            <h3 className="font-playfair text-base font-bold text-[#002141] mb-2">
-              Garantie et service
-            </h3>
-            <p className="text-xs text-[#3A3A3A] leading-relaxed">
-              {product.warrantySummary}
-            </p>
-          </div>
-
-          <div className="bg-white border border-[#002141]/10 p-6">
-            <h3 className="font-playfair text-base font-bold text-[#002141] mb-2">
-              Livraison et retours
-            </h3>
-            <p className="text-xs text-[#3A3A3A] leading-relaxed">
-              {product.deliverySummary}
-            </p>
-          </div>
-        </div>
+        {applicableInformation.length > 0 && <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-16">{applicableInformation.map((item) => <div key={item.title} className="bg-white border border-[#002141]/10 p-6"><h3 className="font-playfair text-base font-bold text-[#002141] mb-2">{item.title}</h3><p className="text-xs text-[#3A3A3A] leading-relaxed">{item.value}</p></div>)}</div>}
 
         {/* Decision FAQ */}
-        <div className="bg-white border border-[#002141]/10 p-8 sm:p-12 mb-16">
+        {product.faq.length > 0 && <div className="bg-white border border-[#002141]/10 p-8 sm:p-12 mb-16">
           <div className="max-w-3xl mb-8">
             <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-[#AC854B] block mb-2">
               QUESTIONS FRÉQUENTES
@@ -430,7 +397,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, n
             ))}
           </div>
 
-          <div className="pt-8 mt-6 border-t border-[#002141]/10">
+          {whatsappUrl && <div className="pt-8 mt-6 border-t border-[#002141]/10">
             <a
               href={whatsappUrl}
               target="_blank"
@@ -440,8 +407,8 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, n
               <span>ÉCHANGER À PROPOS DE CETTE PIÈCE</span>
               <ChevronRight className="w-4 h-4 text-[#AC854B]" />
             </a>
-          </div>
-        </div>
+          </div>}
+        </div>}
       </div>
 
       {/* Share Modal Dialog */}

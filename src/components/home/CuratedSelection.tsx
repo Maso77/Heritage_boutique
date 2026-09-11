@@ -1,5 +1,5 @@
 import React from 'react';
-import { getFeaturedWatches } from '../../data/products';
+import { usePublicContent } from '../../lib/public-content';
 import { ProductCard } from '../catalog/ProductCard';
 import { ArrowRight } from 'lucide-react';
 
@@ -8,7 +8,8 @@ interface CuratedSelectionProps {
 }
 
 export const CuratedSelection: React.FC<CuratedSelectionProps> = ({ navigate }) => {
-  const featured = getFeaturedWatches();
+  const { products } = usePublicContent();
+  const featured = products.filter((product) => product.category === 'montres').slice(0, 3);
 
   return (
     <section className="py-20 md:py-28 bg-white border-b border-[#002141]/10">

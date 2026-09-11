@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, ArrowRight, Eye, Heart } from 'lucide-react';
 import { motion } from 'motion/react';
-import { formatXOF, PRODUCTS } from '../../data/products';
+import { usePublicContent, xof as formatXOF } from '../../lib/public-content';
 import { useStore } from '../../context/StoreContext';
 
 interface SignaturePiecesSectionProps {
@@ -19,93 +19,41 @@ interface SignatureItem {
   badge?: string;
 }
 
-const SIGNATURE_ITEMS: SignatureItem[] = [
-  {
-    id: 'prod-tissot-pr516-011',
-    title: 'Élégance Classique',
-    subTitle: 'Tissot PR516 Chronographe',
-    specs: 'Acier inoxydable & verre saphir inrayable',
-    priceXOF: 330000,
-    image: '/assets/products/tissot-pr516-white.jpg',
-    slug: 'tissot-pr516-40mm-t149-417-11-011-00',
-    badge: 'Chronographe'
-  },
-  {
-    id: 'prod-tissot-chemin-des-tourelles-gold',
-    title: 'Or Héritage',
-    subTitle: 'Chemin Des Tourelles 42 mm',
-    specs: 'Acier PVD or jaune & verre saphir inrayable',
-    priceXOF: 460000,
-    image: '/assets/products/tissot-chemin-gold.jpg',
-    slug: 'tissot-chemin-des-tourelles-42mm-t139-407-22-038-00',
-    badge: 'Édition Prestige'
-  },
-  {
-    id: 'prod-tissot-le-locle-20th',
-    title: 'Chrono Moderne',
-    subTitle: 'Tissot Le Locle Automatique',
-    specs: 'Acier inoxydable & fond transparent saphir',
-    priceXOF: 550000,
-    image: '/assets/products/tissot-le-locle.jpg',
-    slug: 'tissot-le-locle-20th-anniversary-t006-407-11-033-03',
-    badge: 'Automatique'
-  },
-  {
-    id: 'prod-tissot-seastar-1000-black',
-    title: 'Plongeuse Signature',
-    subTitle: 'Tissot Seastar 1000 40 mm',
-    specs: 'Acier 316L & étanchéité haute pression 30 bar',
-    priceXOF: 290000,
-    image: '/assets/products/tissot-seastar-black.jpg',
-    slug: 'tissot-seastar-1000-40mm-t120-410-33-051-00',
-    badge: 'Plongeuse 300m'
-  },
-  {
-    id: 'prod-tissot-pr516-041',
-    title: 'Bleu Nuit',
-    subTitle: 'Tissot PR516 Cadran Bleu',
-    specs: 'Cadran bleu soleillé & verre saphir inrayable',
-    priceXOF: 330000,
-    image: '/assets/products/tissot-pr516-blue.jpg',
-    slug: 'tissot-pr516-cadran-bleu-40mm-t149-417-11-041-00',
-    badge: 'Bleu Soleillé'
-  },
-  {
-    id: 'prod-tissot-pr100-011',
-    title: 'Minimaliste Urbain',
-    subTitle: 'Tissot PR 100 40 mm',
-    specs: 'Lignes pures en acier & verre saphir inrayable',
-    priceXOF: 198000,
-    image: '/assets/products/tissot-pr100.jpg',
-    slug: 'tissot-pr-100-40mm-t150-410-16-011-00',
-    badge: 'Quotidien'
-  }
-];
-
-// Repeat items to allow smooth continuous sliding across multiple cycles in both directions
-const REPEAT_COUNT = 9;
-const EXTENDED_ITEMS: { item: SignatureItem; originalIndex: number; uniqueKey: string }[] = [];
-for (let r = 0; r < REPEAT_COUNT; r++) {
-  SIGNATURE_ITEMS.forEach((it, idx) => {
-    EXTENDED_ITEMS.push({
-      item: it,
-      originalIndex: idx,
-      uniqueKey: `${it.id}-repeat-${r}`
-    });
-  });
-}
-
-// Initial active index: center cycle, item index 1 ("Or Héritage") to match the reference layout
-const BASE_COUNT = SIGNATURE_ITEMS.length;
-const CENTER_CYCLE = Math.floor(REPEAT_COUNT / 2);
-const INITIAL_INDEX = CENTER_CYCLE * BASE_COUNT + 1;
-
 export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ navigate }) => {
   const { isInWishlist, toggleWishlist } = useStore();
+  const { products } = usePublicContent();
+  const SIGNATURE_ITEMS = useMemo<SignatureItem[]>(() => products
+    .filter((product) => product.category === 'montres')
+    .slice(0, 6)
+    .map((product) => ({
+      id: product.id,
+      title: product.name,
+      subTitle: product.brand,
+      specs: product.shortDescription,
+      priceXOF: product.priceXOF,
+      image: product.primaryImage,
+      slug: product.slug,
+      badge: product.attributes?.mouvement || undefined
+    })), [products]);
+  const REPEAT_COUNT = 9;
+  const BASE_COUNT = Math.max(SIGNATURE_ITEMS.length, 1);
+  const CENTER_CYCLE = Math.floor(REPEAT_COUNT / 2);
+  const INITIAL_INDEX = CENTER_CYCLE * BASE_COUNT;
+  const EXTENDED_ITEMS = useMemo(() => {
+    const items: { item: SignatureItem; originalIndex: number; uniqueKey: string }[] = [];
+    for (let repeat = 0; repeat < REPEAT_COUNT; repeat += 1) {
+      SIGNATURE_ITEMS.forEach((item, index) => items.push({ item, originalIndex: index, uniqueKey: `${item.id}-repeat-${repeat}` }));
+    }
+    return items;
+  }, [SIGNATURE_ITEMS]);
   const [activeIndex, setActiveIndex] = useState(INITIAL_INDEX);
   const [withAnimation, setWithAnimation] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState<number>(1000);
+
+  useEffect(() => {
+    setActiveIndex(INITIAL_INDEX);
+  }, [INITIAL_INDEX]);
 
   // ResizeObserver to calculate dynamic track dimensions
   useEffect(() => {
@@ -181,6 +129,8 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
   };
 
   const realActiveOriginalIndex = ((activeIndex % BASE_COUNT) + BASE_COUNT) % BASE_COUNT;
+
+  if (!SIGNATURE_ITEMS.length) return null;
 
   return (
     <section className="py-20 md:py-28 bg-[#FAF9F7] border-b border-[#002141]/10 overflow-hidden select-none">
@@ -298,7 +248,7 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
                     >
                       {/* Wishlist Button */}
                       {(() => {
-                        const product = PRODUCTS.find((p) => p.id === item.id || p.slug === item.slug);
+                        const product = products.find((p) => p.id === item.id || p.slug === item.slug);
                         const isFav = product ? isInWishlist(product.id) : false;
                         return (
                           <button
