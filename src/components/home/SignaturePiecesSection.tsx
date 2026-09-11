@@ -97,7 +97,7 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
 
   const gap = isMobile ? 16 : isTablet ? 24 : 28;
   const cardWidth = isMobile
-    ? Math.min(290, containerWidth - 48)
+    ? Math.min(260, containerWidth - 64)
     : isTablet
     ? 290
     : Math.min(330, Math.floor((containerWidth - 2 * gap) / 3));
@@ -133,7 +133,7 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
   if (!SIGNATURE_ITEMS.length) return null;
 
   return (
-    <section className="py-20 md:py-28 bg-[#FAF9F7] border-b border-[#002141]/10 overflow-hidden select-none">
+    <section className="pt-20 pb-32 md:py-28 bg-[#FAF9F7] border-b border-[#002141]/10 overflow-hidden select-none">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Section Header with elegant French typography */}
         <div className="text-center max-w-3xl mx-auto mb-14 md:mb-18">
@@ -159,7 +159,7 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
               handlePrev();
             }}
             aria-label="Pièce précédente"
-            className="absolute left-1 sm:-left-4 md:-left-8 top-1/3 -translate-y-1/2 z-40 w-11 h-11 rounded-full bg-white/95 border border-[#002141]/15 text-[#002141] hover:bg-[#002141] hover:text-white shadow-md flex items-center justify-center transition-all duration-200 cursor-pointer group focus:outline-hidden"
+            className="absolute left-2 sm:-left-4 md:-left-8 top-[35%] sm:top-1/3 -translate-y-1/2 z-40 w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-white/95 border border-[#002141]/15 text-[#002141] hover:bg-[#002141] hover:text-white shadow-md hidden sm:flex items-center justify-center transition-all duration-200 cursor-pointer group focus:outline-hidden"
           >
             <ChevronLeft className="w-5 h-5 group-hover:-translate-x-0.5 transition-transform" />
           </button>
@@ -172,7 +172,7 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
               handleNext();
             }}
             aria-label="Pièce suivante"
-            className="absolute right-1 sm:-right-4 md:-right-8 top-1/3 -translate-y-1/2 z-40 w-11 h-11 rounded-full bg-white/95 border border-[#002141]/15 text-[#002141] hover:bg-[#002141] hover:text-white shadow-md flex items-center justify-center transition-all duration-200 cursor-pointer group focus:outline-hidden"
+            className="absolute right-2 sm:-right-4 md:-right-8 top-[35%] sm:top-1/3 -translate-y-1/2 z-40 w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-white/95 border border-[#002141]/15 text-[#002141] hover:bg-[#002141] hover:text-white shadow-md hidden sm:flex items-center justify-center transition-all duration-200 cursor-pointer group focus:outline-hidden"
           >
             <ChevronRight className="w-5 h-5 group-hover:translate-x-0.5 transition-transform" />
           </button>
@@ -219,7 +219,7 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
                       }
                     }}
                     animate={{
-                      scale: isCenter ? 1.08 : isNeighbor ? 0.94 : 0.86,
+                      scale: isCenter ? (isMobile ? 1.04 : 1.08) : isNeighbor ? 0.94 : 0.86,
                       opacity: isCenter ? 1 : isNeighbor ? 0.68 : 0.35,
                       filter: isCenter ? 'blur(0px)' : isNeighbor ? 'blur(0px)' : 'blur(1px)'
                     }}
