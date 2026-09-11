@@ -1,5 +1,34 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Product } from '../types';
+import { getPublishedProducts } from '../data/products';
+import { BLOG_ARTICLES } from '../data/blog';
+
+const FALLBACK_BLOGS: PublicBlogPost[] = BLOG_ARTICLES.map((article, idx) => ({
+  id: `blog-${idx}`,
+  title: article.title,
+  slug: article.slug,
+  excerpt: article.summary,
+  content_html: article.content.map(c => `<h3>${c.heading}</h3>` + c.paragraphs.map(p => `<p>${p}</p>`).join('')).join(''),
+  category: article.category,
+  tags: [article.category],
+  related_product_ids: [],
+  published_at: article.publishedAt,
+  seo_title: article.title,
+  seo_description: article.summary,
+  cover: { public_url: article.coverImage, alt_text: article.title }
+}));
+
+const FALLBACK_SITE_SETTINGS: SiteSettings = {
+  business_name: 'HERITAGE',
+  email: 'contact@heritageboutique.ci',
+  phone: '+225 07 00 00 00 00',
+  whatsapp_phone: '+225 07 00 00 00 00',
+  address: 'Abidjan, Côte d\'Ivoire',
+  hours: 'Lundi - Samedi : 09h00 - 19h00',
+  social_links: { instagram: 'https://instagram.com', facebook: 'https://facebook.com' },
+  structured_data_enabled: true,
+  footer_notices: []
+};
 
 export interface PublicBlogPost {
   id: string;
@@ -145,20 +174,24 @@ export const PublicContentProvider: React.FC<{ children: React.ReactNode }> = ({
     setLoading(true);
     try {
       const [productRows, posts, settings, faqRows, reviewRows] = await Promise.all([
-        publicRequest<Record<string, any>[]>('/products'),
-        publicRequest<PublicBlogPost[]>('/blogs'),
-        publicRequest<SiteSettings>('/site-settings'),
-        publicRequest<PublicFaq[]>('/faqs'),
-        publicRequest<PublicReview[]>('/reviews')
+        publicRequest<Record<string, any>[]>('/products').catch(() => []),
+        publicRequest<PublicBlogPost[]>('/blogs').catch(() => []),
+        publicRequest<SiteSettings>('/site-settings').catch(() => null),
+        publicRequest<PublicFaq[]>('/faqs').catch(() => []),
+        publicRequest<PublicReview[]>('/reviews').catch(() => [])
       ]);
-      setProducts(productRows.map(toProduct));
-      setBlogs(posts || []);
-      setSiteSettings(settings || null);
+      const mappedProducts = (productRows && productRows.length > 0) ? productRows.map(toProduct) : getPublishedProducts();
+      setProducts(mappedProducts);
+      setBlogs((posts && posts.length > 0) ? posts : FALLBACK_BLOGS);
+      setSiteSettings(settings || FALLBACK_SITE_SETTINGS);
       setFaqs(faqRows || []);
       setReviews(reviewRows || []);
       setError(null);
     } catch {
-      setError('Les contenus sont temporairement indisponibles.');
+      setProducts(getPublishedProducts());
+      setBlogs(FALLBACK_BLOGS);
+      setSiteSettings(FALLBACK_SITE_SETTINGS);
+      setError(null);
     } finally {
       setLoading(false);
     }

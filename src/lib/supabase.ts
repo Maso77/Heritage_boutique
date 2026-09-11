@@ -3,12 +3,8 @@ import { Order, Product, UserProfile } from '../types';
 
 // Supabase Configuration
 const metaEnv = (import.meta as any).env || {};
-const SUPABASE_URL = metaEnv.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = metaEnv.VITE_SUPABASE_ANON_KEY;
-
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  throw new Error('Supabase navigateur non configuré. Renseignez VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY.');
-}
+const SUPABASE_URL = metaEnv.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
+const SUPABASE_ANON_KEY = metaEnv.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-key';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {

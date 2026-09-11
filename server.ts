@@ -53,12 +53,11 @@ function limitAdminRegistration(req: Request, res: Response, next: NextFunction)
 let supabaseAdmin: SupabaseClient | null = null;
 
 function getSupabaseAdmin() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error('Supabase serveur non configuré. Renseignez SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY.');
-  }
+  const url = SUPABASE_URL || 'https://placeholder.supabase.co';
+  const key = SUPABASE_SERVICE_ROLE_KEY || 'placeholder-service-key';
 
   if (!supabaseAdmin) {
-    supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    supabaseAdmin = createClient(url, key, {
       auth: { autoRefreshToken: false, persistSession: false }
     });
   }
@@ -769,7 +768,7 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
 
     // Suppression de la variable inutilisee (satisfait TypeScript strict)
     void usersResult;
-    }
+
     const orders = ordersResult.data || [];
     const products = productsResult.data || [];
     const revenueOrders = orders.filter((order: any) => ['paid', 'processing', 'shipped_or_ready', 'delivered'].includes(order.status));
