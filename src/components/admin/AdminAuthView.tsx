@@ -1,5 +1,5 @@
 import React, { FormEvent, useState } from 'react';
-import { ArrowLeft, Eye, EyeOff, KeyRound, LockKeyhole, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, LockKeyhole } from 'lucide-react';
 import { createAdministratorAccount, signInAdministrator } from '../../lib/admin-api';
 
 interface AdminAuthViewProps {
@@ -53,13 +53,11 @@ export const AdminAuthView: React.FC<AdminAuthViewProps> = ({ mode, navigate }) 
   return (
     <main className="min-h-screen bg-[#002141] px-4 py-8 sm:px-6 lg:grid lg:grid-cols-2 lg:p-0">
       <section className="hidden min-h-screen flex-col justify-between border-r border-[#D6BB8F]/20 bg-[radial-gradient(circle_at_20%_20%,#16466a_0%,#002141_48%,#00172e_100%)] p-12 text-[#FAF9F7] lg:flex">
-        <div className="flex items-center gap-3">
-          <span className="flex h-12 w-12 items-center justify-center border border-[#D6BB8F] font-playfair text-2xl font-bold text-[#D6BB8F]">H</span>
-          <div>
-            <p className="brand-wordmark text-lg text-[#FAF9F7]">HERITAGE</p>
-            <p className="brand-descriptor mt-1 text-[9px] text-[#D6BB8F]">ADMINISTRATION</p>
-          </div>
-        </div>
+        <img
+          src="/assets/logo-white.svg"
+          alt="HERITAGE — Montres et Accessoires"
+          className="h-auto w-48 object-contain object-left"
+        />
         <div className="max-w-lg">
           <p className="mb-5 text-xs font-bold uppercase tracking-[0.22em] text-[#D6BB8F]">Espace réservé</p>
           <h1 className="font-playfair text-5xl font-semibold leading-tight">Pilotez votre maison, avec précision.</h1>
@@ -82,9 +80,11 @@ export const AdminAuthView: React.FC<AdminAuthViewProps> = ({ mode, navigate }) 
           </button>
 
           <div className="mb-8">
-            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#002141] text-[#D6BB8F]">
-              {isCreate ? <KeyRound className="h-5 w-5" aria-hidden="true" /> : <ShieldCheck className="h-5 w-5" aria-hidden="true" />}
-            </div>
+            <img
+              src="/assets/logo.svg"
+              alt="HERITAGE — Montres et Accessoires"
+              className="mb-5 h-auto w-36 object-contain object-left"
+            />
             <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#AC854B]">Portail privé</p>
             <h2 className="font-playfair mt-2 text-3xl font-semibold text-[#002141]">
               {isCreate ? 'Créer un compte administrateur' : 'Connexion administrateur'}
