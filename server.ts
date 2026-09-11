@@ -738,31 +738,69 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
   }
   try {
     const admin = getSupabaseAdmin();
-    const [ordersResult, recentResult, productsResult, reviewsResult, contactsResult, usersResult] = await Promise.all([
+    // Requetes principales — toutes obligatoires pour le dashboard
+    const [ordersResult, recentResult, productsResult, reviewsResult, usersResult] = await Promise.all([
       admin.from('orders').select('id, order_number, total_xof, status, created_at').gte('created_at', from.toISOString()).lte('created_at', to.toISOString()).order('created_at', { ascending: true }),
       admin.from('orders').select('id, order_number, customer_name, customer_email, total_xof, status, created_at').order('created_at', { ascending: false }).limit(8),
-      admin.from('products').select('id, name, slug, stock_quantity, low_stock_threshold, stock_policy, status').neq('status', 'archived').order('updated_at', { ascending: false }),
+      admin.from('products').select('id, name, slug, stock_quantity, low_stock_threshold, stock_policy, status').neq('status', 'archived').order('stock_quantity', { ascending: true }),
       admin.from('product_reviews').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-      admin.from('contact_messages').select('id', { count: 'exact', head: true }).eq('status', 'unread'),
       admin.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'customer').gte('created_at', from.toISOString()).lte('created_at', to.toISOString())
     ]);
-    if (ordersResult.error || recentResult.error || productsResult.error || reviewsResult.error || contactsResult.error || usersResult.error) {
-      throw ordersResult.error || recentResult.error || productsResult.error || reviewsResult.error || contactsResult.error || usersResult.error;
+    if (ordersResult.error) throw ordersResult.error;
+    if (recentResult.error) throw recentResult.error;
+    if (productsResult.error) throw productsResult.error;
+    if (reviewsResult.error) throw reviewsResult.error;
+    if (usersResult.error) throw usersResult.error;
+
+    // contact_messages : isolation — la table peut ne pas encore exister (42P01)
+    let unreadMessages = 0;
+    try {
+      const contactsResult = await admin
+        .from('contact_messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'unread');
+      const errCode = contactsResult.error && 'code' in contactsResult.error ? String((contactsResult.error as { code?: unknown }).code || '') : '';
+      if (!contactsResult.error || ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(errCode)) {
+        unreadMessages = contactsResult.count || 0;
+      }
+    } catch {
+      // Table contact_messages absente : le dashboard continue avec 0 messages non lus
+    }
+
+    // Suppression de la variable inutilisee (satisfait TypeScript strict)
+    void usersResult;
     }
     const orders = ordersResult.data || [];
     const products = productsResult.data || [];
     const revenueOrders = orders.filter((order: any) => ['paid', 'processing', 'shipped_or_ready', 'delivered'].includes(order.status));
     const revenueXOF = revenueOrders.reduce((sum, order: any) => sum + Number(order.total_xof || 0), 0);
-    const statuses = Object.fromEntries(['pending_payment', 'payment_pending', 'paid', 'processing', 'shipped_or_ready', 'delivered', 'cancelled', 'refunded', 'payment_failed'].map((status) => [status, orders.filter((order: any) => order.status === status).length]));
-    const lowStockProducts = products.filter((product: any) => product.stock_policy !== 'on_order' && Number(product.stock_quantity || 0) <= Number(product.low_stock_threshold || 0));
+
+    // Statuts : on n'inclut que ceux ayant au moins une commande
+    const allStatuses = ['pending_payment', 'payment_pending', 'paid', 'processing', 'shipped_or_ready', 'delivered', 'cancelled', 'refunded', 'payment_failed'];
+    const statuses = Object.fromEntries(
+      allStatuses
+        .map((status) => [status, orders.filter((order: any) => order.status === status).length] as [string, number])
+        .filter(([, count]) => count > 0)
+    );
+
+    const lowStockProducts = products.filter((product: any) =>
+      product.stock_policy !== 'on_order' &&
+      Number(product.stock_quantity || 0) <= Number(product.low_stock_threshold || 0)
+    );
+
+    // Graphique CA + commandes par jour, trie chronologiquement
     const points = new Map<string, { date: string; revenueXOF: number; orders: number }>();
     orders.forEach((order: any) => {
       const date = new Date(order.created_at).toISOString().slice(0, 10);
       const point = points.get(date) || { date, revenueXOF: 0, orders: 0 };
       point.orders += 1;
-      if (['paid', 'processing', 'shipped_or_ready', 'delivered'].includes(order.status)) point.revenueXOF += Number(order.total_xof || 0);
+      if (['paid', 'processing', 'shipped_or_ready', 'delivered'].includes(order.status)) {
+        point.revenueXOF += Number(order.total_xof || 0);
+      }
       points.set(date, point);
     });
+    const chart = [...points.values()].sort((a, b) => a.date.localeCompare(b.date));
+
     res.json({
       period: { from: from.toISOString(), to: to.toISOString() },
       totals: {
@@ -771,13 +809,16 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
         averageCartXOF: revenueOrders.length ? Math.round(revenueXOF / revenueOrders.length) : 0,
         lowStock: lowStockProducts.length,
         pendingReviews: reviewsResult.count || 0,
-        unreadMessages: contactsResult.count || 0,
+        unreadMessages,
         newCustomers: usersResult.count || 0,
         statuses
       },
-      chart: [...points.values()],
+      chart,
       recentOrders: recentResult.data || [],
-      lowStockProducts: lowStockProducts.slice(0, 8).map((product: any) => ({ ...product, stock_status: stockStatus(product.stock_quantity, product.low_stock_threshold, product.stock_policy) }))
+      lowStockProducts: lowStockProducts.slice(0, 8).map((product: any) => ({
+        ...product,
+        stock_status: stockStatus(product.stock_quantity, product.low_stock_threshold, product.stock_policy)
+      }))
     });
   } catch (error) {
     sendSupabaseFailure(res, error, 'Les statistiques sont indisponibles.');
