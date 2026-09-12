@@ -737,44 +737,69 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
   }
   try {
     const admin = getSupabaseAdmin();
-    // Requetes principales — toutes obligatoires pour le dashboard
-    const [ordersResult, recentResult, productsResult, reviewsResult, usersResult] = await Promise.all([
-      admin.from('orders').select('id, order_number, total_xof, status, created_at').gte('created_at', from.toISOString()).lte('created_at', to.toISOString()).order('created_at', { ascending: true }),
-      admin.from('orders').select('id, order_number, customer_name, customer_email, total_xof, status, created_at').order('created_at', { ascending: false }).limit(8),
-      admin.from('products').select('id, name, slug, stock_quantity, low_stock_threshold, stock_policy, status').neq('status', 'archived').order('stock_quantity', { ascending: true }),
-      admin.from('product_reviews').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-      admin.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'customer').gte('created_at', from.toISOString()).lte('created_at', to.toISOString())
-    ]);
-    if (ordersResult.error) throw ordersResult.error;
-    if (recentResult.error) throw recentResult.error;
-    if (productsResult.error) throw productsResult.error;
-    if (reviewsResult.error) throw reviewsResult.error;
-    if (usersResult.error) throw usersResult.error;
+    
+    // Safety wrappers so one table issue doesn't crash the entire admin portal dashboard
+    const ordersResult = await admin
+      .from('orders')
+      .select('id, order_number, total_xof, status, created_at')
+      .gte('created_at', from.toISOString())
+      .lte('created_at', to.toISOString())
+      .order('created_at', { ascending: true })
+      .then((r) => r, (err) => ({ data: [], error: err }));
 
-    // contact_messages : isolation — la table peut ne pas encore exister (42P01)
+    const recentResult = await admin
+      .from('orders')
+      .select('id, order_number, customer_name, customer_email, total_xof, status, created_at')
+      .order('created_at', { ascending: false })
+      .limit(8)
+      .then((r) => r, (err) => ({ data: [], error: err }));
+
+    let productsResult = await admin
+      .from('products')
+      .select('id, name, slug, stock_quantity, low_stock_threshold, stock_policy, status')
+      .neq('status', 'archived')
+      .order('stock_quantity', { ascending: true })
+      .then((r) => r, (err) => ({ data: [], error: err }));
+
+    if (productsResult.error) {
+      // Fallback query if low_stock_threshold or stock_policy column doesn't exist yet
+      productsResult = await admin
+        .from('products')
+        .select('id, name, slug, stock_quantity, status')
+        .neq('status', 'archived')
+        .then((r) => r, (err) => ({ data: [], error: err }));
+    }
+
+    const reviewsResult = await admin
+      .from('product_reviews')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending')
+      .then((r) => r, () => ({ count: 0, error: null }));
+
+    const usersResult = await admin
+      .from('profiles')
+      .select('id', { count: 'exact', head: true })
+      .eq('role', 'customer')
+      .gte('created_at', from.toISOString())
+      .lte('created_at', to.toISOString())
+      .then((r) => r, () => ({ count: 0, error: null }));
+
     let unreadMessages = 0;
     try {
       const contactsResult = await admin
         .from('contact_messages')
         .select('id', { count: 'exact', head: true })
         .eq('status', 'unread');
-      const errCode = contactsResult.error && 'code' in contactsResult.error ? String((contactsResult.error as { code?: unknown }).code || '') : '';
-      if (!contactsResult.error || ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(errCode)) {
-        unreadMessages = contactsResult.count || 0;
-      }
+      unreadMessages = contactsResult.count || 0;
     } catch {
-      // Table contact_messages absente : le dashboard continue avec 0 messages non lus
+      // Table contact_messages absente
     }
-
-    // Suppression de la variable inutilisee (satisfait TypeScript strict)
-    void usersResult;
 
     const orders = ordersResult.data || [];
     const products = productsResult.data || [];
     const revenueOrders = orders.filter((order: any) => ['paid', 'processing', 'shipped_or_ready', 'delivered'].includes(order.status));
     const revenueXOF = revenueOrders.reduce((sum, order: any) => sum + Number(order.total_xof || 0), 0);
 
-    // Statuts : on n'inclut que ceux ayant au moins une commande
     const allStatuses = ['pending_payment', 'payment_pending', 'paid', 'processing', 'shipped_or_ready', 'delivered', 'cancelled', 'refunded', 'payment_failed'];
     const statuses = Object.fromEntries(
       allStatuses
@@ -784,10 +809,9 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
 
     const lowStockProducts = products.filter((product: any) =>
       product.stock_policy !== 'on_order' &&
-      Number(product.stock_quantity || 0) <= Number(product.low_stock_threshold || 0)
+      Number(product.stock_quantity || 0) <= Number(product.low_stock_threshold || 2)
     );
 
-    // Graphique CA + commandes par jour, trie chronologiquement
     const points = new Map<string, { date: string; revenueXOF: number; orders: number }>();
     orders.forEach((order: any) => {
       const date = new Date(order.created_at).toISOString().slice(0, 10);
@@ -816,7 +840,7 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
       recentOrders: recentResult.data || [],
       lowStockProducts: lowStockProducts.slice(0, 8).map((product: any) => ({
         ...product,
-        stock_status: stockStatus(product.stock_quantity, product.low_stock_threshold, product.stock_policy)
+        stock_status: stockStatus(product.stock_quantity, product.low_stock_threshold || 2, product.stock_policy || 'standard')
       }))
     });
   } catch (error) {
@@ -826,10 +850,22 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
 
 app.get('/api/admin/products', async (_req: AdminRequest, res: Response) => {
   try {
-    const { data, error } = await getSupabaseAdmin()
+    const admin = getSupabaseAdmin();
+    let { data, error } = await admin
       .from('products')
       .select('*, product_variants(*), media_assets(*)')
       .order('updated_at', { ascending: false });
+
+    if (error) {
+      // Fallback if relation names are not yet cached in PostgREST
+      const fallback = await admin
+        .from('products')
+        .select('*')
+        .order('updated_at', { ascending: false });
+      data = fallback.data;
+      error = fallback.error;
+    }
+
     if (error) throw error;
     res.json(data || []);
   } catch (error) {
