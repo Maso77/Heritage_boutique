@@ -188,7 +188,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
@@ -229,12 +229,14 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
 
     setIsProcessing(true);
 
-    // Create order and sync to Supabase with active user context
-    setTimeout(() => {
-      createOrder(customer, 'transmission_whatsapp');
+    try {
+      await createOrder(customer, 'transmission_whatsapp');
       setIsProcessing(false);
       navigate('/commande/confirmation');
-    }, 600);
+    } catch (err: any) {
+      setIsProcessing(false);
+      setErrorMsg(err.message || 'Erreur lors de la validation de la commande.');
+    }
   };
 
   if (cart.length === 0) {

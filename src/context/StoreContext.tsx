@@ -219,10 +219,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const cartSubtotal = cart.reduce((acc, item) => acc + item.product.priceXOF * item.quantity, 0);
   const cartItemCount = cart.reduce((acc, item) => acc + item.quantity, 0);
 
-  const createOrder = (
+  const createOrder = async (
     customer: OrderCustomer,
     paymentMethod: string = 'commande_directe'
-  ): Order => {
+  ): Promise<Order> => {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const orderNumber = `HER-${dateStr}-${randomSuffix}`;
@@ -251,10 +251,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     setOrders((prev) => [newOrder, ...prev]);
     setCurrentOrder(newOrder);
-    // Clear cart upon successful order submission
     setCart([]);
-    // Synchroniser avec Supabase
-    syncOrderToSupabase(newOrder);
+
+    // Synchroniser avec Supabase et attendre la confirmation
+    try {
+      await syncOrderToSupabase(newOrder);
+    } catch (e) {
+      console.warn('Sync order warning:', e);
+    }
     return newOrder;
   };
 

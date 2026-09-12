@@ -184,11 +184,14 @@ export async function fetchCurrentSessionProfile(): Promise<UserProfile | null> 
  */
 export async function syncOrderToSupabase(order: Order, userId?: string) {
   try {
-    let currentUserId = userId || null;
+    const isUuid = (val: unknown) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    let currentUserId = (userId && isUuid(userId)) ? userId : null;
     if (!currentUserId) {
       try {
         const { data: authData } = await supabase.auth.getUser();
-        currentUserId = authData?.user?.id || null;
+        if (authData?.user?.id && isUuid(authData.user.id)) {
+          currentUserId = authData.user.id;
+        }
       } catch {
         // Ignore auth error
       }

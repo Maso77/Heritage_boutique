@@ -773,11 +773,27 @@ app.post('/api/public/orders', async (req: Request, res: Response) => {
 
   try {
     const admin = getSupabaseAdmin();
+    const isUuid = (val: unknown) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    const rawUserId = text(orderData.user_id, 80);
+    const userId = isUuid(rawUserId) ? rawUserId : null;
 
-    const orderPayload = {
+    const rawItems = Array.isArray(orderData.items) ? orderData.items : [];
+    const formattedItems = rawItems.map((item: any) => ({
+      product_id: item.product_id || item.product?.id || null,
+      product_sku: text(item.product_sku || item.product?.sku, 80) || null,
+      product_name: text(item.product_name || item.product?.name, 255) || 'Article Horlogerie',
+      product_reference: text(item.product_reference || item.product_ref || item.product?.reference || item.product?.sku, 100) || null,
+      product_ref: text(item.product_ref || item.product_reference || item.product?.reference || item.product?.sku, 100) || null,
+      quantity: Math.max(1, Math.round(Number(item.quantity || 1))),
+      price_xof: Math.round(Number(item.price_xof || item.unit_price_xof || item.product?.priceXOF || 0)),
+      unit_price_xof: Math.round(Number(item.unit_price_xof || item.price_xof || item.product?.priceXOF || 0)),
+      image_url: text(item.image_url || item.product?.primaryImage, 500) || null
+    }));
+
+    const orderPayload: Record<string, any> = {
       id: orderData.id || 'ord-' + Date.now(),
       order_number: text(orderData.order_number, 50),
-      user_id: text(orderData.user_id, 80) || null,
+      user_id: userId,
       customer_name: text(orderData.customer_name, 180),
       customer_email: text(orderData.customer_email, 255),
       customer_phone: text(orderData.customer_phone, 50) || null,
@@ -796,34 +812,40 @@ app.post('/api/public/orders', async (req: Request, res: Response) => {
       payment_method: text(orderData.payment_method || orderData.paymentMethod, 50) || 'commande_directe',
       payment_reference: text(orderData.payment_reference || orderData.paymentReference, 180) || null,
       status_history: Array.isArray(orderData.status_history) ? orderData.status_history : orderData.statusHistory || [],
+      order_items: formattedItems,
       created_at: orderData.created_at || orderData.createdAt || new Date().toISOString()
     };
 
-    const { data: insertedOrder, error: orderError } = await admin
+    let insertedOrder: any = null;
+    let { data, error: orderError } = await admin
       .from('orders')
       .upsert(orderPayload)
       .select()
       .single();
+
+    if (orderError && orderError.message && orderError.message.includes('order_items')) {
+      const { order_items, ...fallbackPayload } = orderPayload;
+      const fallback = await admin
+        .from('orders')
+        .upsert(fallbackPayload)
+        .select()
+        .single();
+      data = fallback.data;
+      orderError = fallback.error;
+    }
 
     if (orderError) {
       console.error('Error in POST /api/public/orders admin upsert:', orderError);
       return sendError(res, 400, `Impossible d'enregistrer la commande dans Supabase: ${orderError.message}`);
     }
 
-    // Insert order items
-    const rawItems = Array.isArray(orderData.items) ? orderData.items : [];
-    if (rawItems.length > 0) {
-      const itemsPayload = rawItems.map((item: any) => ({
+    insertedOrder = data;
+
+    // Insert order items table records
+    if (formattedItems.length > 0 && insertedOrder?.id) {
+      const itemsPayload = formattedItems.map((item) => ({
         order_id: insertedOrder.id,
-        product_id: item.product_id || item.product?.id || null,
-        product_sku: text(item.product_sku || item.product?.sku, 80) || null,
-        product_name: text(item.product_name || item.product?.name, 255),
-        product_reference: text(item.product_reference || item.product_ref || item.product?.reference || item.product?.sku, 100) || null,
-        product_ref: text(item.product_ref || item.product_reference || item.product?.reference || item.product?.sku, 100) || null,
-        quantity: Math.max(1, Math.round(Number(item.quantity || 1))),
-        price_xof: Math.round(Number(item.price_xof || item.unit_price_xof || item.product?.priceXOF || 0)),
-        unit_price_xof: Math.round(Number(item.unit_price_xof || item.price_xof || item.product?.priceXOF || 0)),
-        image_url: text(item.image_url || item.product?.primaryImage, 500) || null
+        ...item
       }));
 
       const { error: itemsError } = await admin.from('order_items').insert(itemsPayload);
