@@ -6,10 +6,16 @@ import {
   BarChart3,
   BookOpen,
   Boxes,
+  Calendar,
   Check,
+  CheckCircle,
   CheckCircle2,
   ChevronDown,
   ClipboardList,
+  Clock,
+  CreditCard,
+  Eye,
+  FileCheck,
   FileText,
   GalleryVerticalEnd,
   HelpCircle,
@@ -20,6 +26,7 @@ import {
   LoaderCircle,
   LogOut,
   Mail,
+  MapPin,
   Menu,
   MessageSquareText,
   PackagePlus,
@@ -27,14 +34,19 @@ import {
   PanelLeftOpen,
   Pencil,
   Plus,
+  Printer,
   RefreshCw,
+  Search,
   Settings2,
+  ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Star,
   Trash2,
+  Truck,
   Upload,
+  User,
   UsersRound,
   X
 } from 'lucide-react';
@@ -156,15 +168,40 @@ const toProductForm = (product: AnyRecord): AnyRecord => {
 };
 
 const statusLabel: Record<string, string> = {
-  pending_payment: 'Commande reçue',
-  payment_pending: 'Commande à valider',
-  paid: 'Commande validée',
+  pending_payment: 'Commande reçue (Attente règlement)',
+  payment_pending: 'Paiement transmis (À valider)',
+  paid: 'Payée (Validée)',
   processing: 'En préparation',
-  shipped_or_ready: 'Expédiée / prête',
-  delivered: 'Livrée',
+  shipped_or_ready: 'Expédiée / Prête pour retrait',
+  delivered: 'Livrée / Remise au client',
   cancelled: 'Annulée',
   refunded: 'Annulée / Remboursée',
-  payment_failed: 'Commande non aboutie'
+  payment_failed: 'Paiement non abouti'
+};
+
+const getStatusBadgeClass = (status: string) => {
+  switch (status) {
+    case 'paid':
+      return 'bg-emerald-100 text-emerald-900 border-emerald-300';
+    case 'delivered':
+      return 'bg-green-100 text-green-900 border-green-400';
+    case 'processing':
+      return 'bg-blue-100 text-blue-900 border-blue-300';
+    case 'shipped_or_ready':
+      return 'bg-indigo-100 text-indigo-900 border-indigo-300';
+    case 'payment_pending':
+      return 'bg-yellow-100 text-yellow-900 border-yellow-300';
+    case 'pending_payment':
+      return 'bg-amber-100 text-amber-900 border-amber-300';
+    case 'cancelled':
+      return 'bg-red-100 text-red-800 border-red-300';
+    case 'refunded':
+      return 'bg-purple-100 text-purple-900 border-purple-300';
+    case 'payment_failed':
+      return 'bg-rose-100 text-rose-800 border-rose-300';
+    default:
+      return 'bg-gray-100 text-gray-800 border-gray-300';
+  }
 };
 
 interface ResourceField {
@@ -786,6 +823,17 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [userSearch, setUserSearch] = useState('');
   const [orderSearch, setOrderSearch] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState('');
+  const [orderDateFromFilter, setOrderDateFromFilter] = useState('');
+  const [orderDateToFilter, setOrderDateToFilter] = useState('');
+  const [orderSort, setOrderSort] = useState<'date_desc' | 'date_asc' | 'total_desc' | 'total_asc' | 'customer_asc' | 'status'>('date_desc');
+  const [selectedOrder, setSelectedOrder] = useState<AnyRecord | null>(null);
+  const [showOrderPrintModal, setShowOrderPrintModal] = useState(false);
+  const [orderDeliveryRefForm, setOrderDeliveryRefForm] = useState('');
+  const [orderDeliveryProofForm, setOrderDeliveryProofForm] = useState('');
+  const [statusChangeTargetStatus, setStatusChangeTargetStatus] = useState('');
+  const [statusChangeNote, setStatusChangeNote] = useState('');
+  const [statusChangeError, setStatusChangeError] = useState('');
+  const [savingOrderStatus, setSavingOrderStatus] = useState(false);
 
   const dashboardUrl = () => {
     const now = new Date();
@@ -895,10 +943,46 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     });
   }, [products, productSearch, productStatusFilter, productCategoryFilter, productStockFilter, productSort]);
 
-  const visibleOrders = useMemo(() => orders.filter((order) => {
-    const query = orderSearch.trim().toLocaleLowerCase('fr-FR');
-    return (!query || [order.order_number, order.customer_name, order.customer_email, order.payment_reference].some((value) => String(value || '').toLocaleLowerCase('fr-FR').includes(query))) && (!orderStatusFilter || order.status === orderStatusFilter);
-  }), [orders, orderSearch, orderStatusFilter]);
+  const visibleOrders = useMemo(() => {
+    const filtered = orders.filter((order) => {
+      const query = orderSearch.trim().toLocaleLowerCase('fr-FR');
+      const matchesSearch =
+        !query ||
+        [
+          order.order_number,
+          order.id,
+          order.customer_name,
+          order.customer_email,
+          order.customer_phone,
+          order.payment_reference,
+          order.delivery_reference,
+          order.shipping_address,
+          order.delivery_address
+        ].some((value) => String(value || '').toLocaleLowerCase('fr-FR').includes(query)) ||
+        (Array.isArray(order.order_items) &&
+          order.order_items.some((item: AnyRecord) =>
+            String(item.product_name || item.name || '').toLocaleLowerCase('fr-FR').includes(query)
+          ));
+
+      const matchesStatus = !orderStatusFilter || order.status === orderStatusFilter;
+
+      const orderTime = order.created_at ? new Date(order.created_at).getTime() : 0;
+      const fromTime = orderDateFromFilter ? new Date(orderDateFromFilter).getTime() : 0;
+      const toTime = orderDateToFilter ? new Date(`${orderDateToFilter}T23:59:59`).getTime() : Infinity;
+      const matchesDate = orderTime >= fromTime && orderTime <= toTime;
+
+      return matchesSearch && matchesStatus && matchesDate;
+    });
+
+    return filtered.sort((a, b) => {
+      if (orderSort === 'date_asc') return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+      if (orderSort === 'total_desc') return Number(b.total_xof || 0) - Number(a.total_xof || 0);
+      if (orderSort === 'total_asc') return Number(a.total_xof || 0) - Number(b.total_xof || 0);
+      if (orderSort === 'customer_asc') return String(a.customer_name || '').localeCompare(String(b.customer_name || ''));
+      if (orderSort === 'status') return String(a.status || '').localeCompare(String(b.status || ''));
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
+  }, [orders, orderSearch, orderStatusFilter, orderDateFromFilter, orderDateToFilter, orderSort]);
   const visibleUsers = useMemo(() => users.filter((user) => {
     const query = userSearch.trim().toLocaleLowerCase('fr-FR');
     return !query || [user.full_name, user.email, user.phone].some((value) => String(value || '').toLocaleLowerCase('fr-FR').includes(query));
@@ -2392,10 +2476,709 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     );
   };
 
-  const renderOrders = () => <>
-    <PanelHeader eyebrow="Commerce" title="Commandes" description="Recherchez, imprimez ou exportez les commandes. Chaque changement est journalisé ; une preuve est requise avant “Livrée”." action={<button type="button" onClick={() => void downloadAdminCsv('/orders/export.csv', 'heritage-commandes.csv').catch((error) => notify(error.message))} className="admin-secondary-button">Exporter CSV</button>} />
-    {orders.length === 0 ? <EmptyState title="Aucune commande" body="Les nouvelles commandes synchronisées depuis le site apparaîtront ici." /> : <><div className="mb-5 flex flex-wrap gap-3 border border-[#002141]/12 bg-white p-4"><label className="text-xs font-semibold">Rechercher<input value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} placeholder="N° commande, client, référence…" className="admin-input mt-1 min-w-64" /></label><label className="text-xs font-semibold">Statut<select value={orderStatusFilter} onChange={(event) => setOrderStatusFilter(event.target.value)} className="admin-input mt-1"><option value="">Tous</option>{Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div><div className="space-y-4">{visibleOrders.map((order) => <article key={order.id} className="border border-[#002141]/15 bg-white p-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><p className="font-semibold text-[#002141]">{order.order_number || order.id}</p><p className="mt-1 text-sm text-[#3A3A3A]">{order.customer_name} · {order.customer_email} · {formatXOF(order.total_xof)}</p><p className="mt-1 text-xs text-[#3A3A3A]">Transmission : {order.payment_method || 'Directe / WhatsApp'} {order.payment_reference ? `· ${order.payment_reference}` : ''}</p></div><div className="flex items-end gap-2"><label className="text-sm font-semibold text-[#002141]">État<select value={order.status} onChange={(event) => void updateOrder(order, event.target.value)} className="admin-input mt-2 min-w-52">{Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><button type="button" onClick={() => window.print()} className="admin-secondary-button">Imprimer</button></div></div>{Array.isArray(order.order_items) && <div className="mt-4 border-t border-[#002141]/10 pt-4 text-sm text-[#3A3A3A]"><p className="font-semibold text-[#002141]">Articles</p><p className="mt-1">{order.order_items.map((item: AnyRecord) => `${item.quantity} × ${item.product_name || item.name}`).join(' · ')}</p></div>}<div className="mt-4 grid gap-3 border-t border-[#002141]/10 pt-4 text-xs text-[#3A3A3A] sm:grid-cols-2"><p>Livraison : {order.delivery_reference || order.delivery_proof_url || 'Aucune preuve / référence renseignée'}</p><p>Adresse : {order.shipping_address || order.delivery_address || 'Non renseignée'}</p></div>{Array.isArray(order.status_history) && order.status_history.length > 0 && <details className="mt-4 border-t border-[#002141]/10 pt-4"><summary className="cursor-pointer text-sm font-semibold text-[#002141]">Historique des statuts</summary><ul className="mt-3 space-y-2 text-xs text-[#3A3A3A]">{order.status_history.slice().reverse().map((entry: AnyRecord, index: number) => <li key={`${entry.timestamp}-${index}`}>{new Date(entry.timestamp).toLocaleString('fr-FR')} · {statusLabel[entry.status] || entry.status}{entry.note ? ` — ${entry.note}` : ''}</li>)}</ul></details>}</article>)}</div>{visibleOrders.length === 0 && <EmptyState title="Aucune commande trouvée" body="Modifiez la recherche ou le filtre." />}</>}
-  </>;
+  const updateOrderStatusFull = async (
+    order: AnyRecord,
+    targetStatus: string,
+    deliveryRef: string,
+    deliveryProofUrl: string,
+    noteText: string
+  ) => {
+    setStatusChangeError('');
+    if (targetStatus === 'delivered' && !deliveryRef.trim() && !deliveryProofUrl.trim()) {
+      const msg = "Une référence ou une preuve de remise (ex: N° de bordereau coursier, code secret, remise en main propre) est obligatoirement requise pour passer au statut 'Livrée'.";
+      setStatusChangeError(msg);
+      return;
+    }
+
+    setSavingOrderStatus(true);
+    try {
+      const updated = await adminRequest<AnyRecord>(`/orders/${order.id}`, {
+        method: 'PATCH',
+        body: {
+          status: targetStatus,
+          delivery_reference: deliveryRef.trim() || null,
+          delivery_proof_url: deliveryProofUrl.trim() || null,
+          note: noteText.trim() || null
+        }
+      });
+
+      setOrders((prev) => prev.map((o) => (o.id === order.id ? updated : o)));
+      if (selectedOrder?.id === order.id) {
+        setSelectedOrder(updated);
+      }
+      notify(`Commande ${updated.order_number || updated.id.slice(0, 8)} mise à jour : ${statusLabel[targetStatus] || targetStatus}.`);
+      setStatusChangeNote('');
+      setStatusChangeError('');
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'La mise à jour du statut a échoué.';
+      setStatusChangeError(msg);
+    } finally {
+      setSavingOrderStatus(false);
+    }
+  };
+
+  const openOrderDetail = (order: AnyRecord) => {
+    setSelectedOrder(order);
+    setOrderDeliveryRefForm(order.delivery_reference || '');
+    setOrderDeliveryProofForm(order.delivery_proof_url || '');
+    setStatusChangeTargetStatus(order.status || 'pending_payment');
+    setStatusChangeNote('');
+    setStatusChangeError('');
+  };
+
+  const renderOrders = () => {
+    const totalOrdersCount = orders.length;
+    const pendingOrdersCount = orders.filter((o) => ['pending_payment', 'payment_pending'].includes(o.status)).length;
+    const processingOrdersCount = orders.filter((o) => ['paid', 'processing', 'shipped_or_ready'].includes(o.status)).length;
+    const deliveredOrdersCount = orders.filter((o) => o.status === 'delivered').length;
+    const totalRevenueXOF = orders
+      .filter((o) => ['paid', 'processing', 'shipped_or_ready', 'delivered'].includes(o.status))
+      .reduce((sum, o) => sum + Number(o.total_xof || 0), 0);
+
+    return (
+      <>
+        <PanelHeader
+          eyebrow="Gestion commerciale"
+          title="Commandes & Récapitulatifs"
+          description="Consultez, filtrez et gérez les commandes Supabase. Mettez à jour les statuts avec journalisation complète de l'historique et référence obligatoire avant remise."
+          action={
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void downloadAdminCsv('/orders/export.csv', 'heritage-commandes.csv').catch((error) => notify(error.message))}
+                className="admin-secondary-button flex items-center gap-2"
+              >
+                <Upload className="h-4 w-4 rotate-180" /> Exporter CSV
+              </button>
+            </div>
+          }
+        />
+
+        {/* Quick KPI Stat Cards */}
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="border border-[#002141]/12 bg-white p-4">
+            <p className="text-xs font-medium uppercase tracking-wider text-[#3A3A3A]">Total Commandes</p>
+            <p className="mt-2 font-playfair text-2xl font-bold text-[#002141]">{totalOrdersCount}</p>
+          </div>
+          <div className="border border-[#002141]/12 bg-white p-4">
+            <p className="text-xs font-medium uppercase tracking-wider text-[#3A3A3A]">À valider / En attente</p>
+            <p className="mt-2 font-playfair text-2xl font-bold text-amber-700">{pendingOrdersCount}</p>
+          </div>
+          <div className="border border-[#002141]/12 bg-white p-4">
+            <p className="text-xs font-medium uppercase tracking-wider text-[#3A3A3A]">En préparation / Expédiées</p>
+            <p className="mt-2 font-playfair text-2xl font-bold text-blue-800">{processingOrdersCount}</p>
+          </div>
+          <div className="border border-[#002141]/12 bg-white p-4">
+            <p className="text-xs font-medium uppercase tracking-wider text-[#3A3A3A]">Livrées & Finalisées</p>
+            <p className="mt-2 font-playfair text-2xl font-bold text-emerald-800">{deliveredOrdersCount}</p>
+          </div>
+          <div className="border border-[#002141]/12 bg-white p-4">
+            <p className="text-xs font-medium uppercase tracking-wider text-[#3A3A3A]">Chiffre d'Affaires Validé</p>
+            <p className="mt-2 font-playfair text-xl font-bold text-[#AC854B]">{formatXOF(totalRevenueXOF)}</p>
+          </div>
+        </div>
+
+        {/* Filters & Search Toolbar */}
+        <div className="mb-6 border border-[#002141]/12 bg-white p-5 space-y-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <label className="block text-xs font-semibold text-[#002141]">Rechercher</label>
+              <div className="relative mt-1">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-[#3A3A3A]/60" />
+                <input
+                  type="text"
+                  value={orderSearch}
+                  onChange={(e) => setOrderSearch(e.target.value)}
+                  placeholder="N° commande, client, téléphone, réf..."
+                  className="admin-input pl-9 w-full"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#002141]">Filtrer par Statut</label>
+              <select
+                value={orderStatusFilter}
+                onChange={(e) => setOrderStatusFilter(e.target.value)}
+                className="admin-input mt-1 w-full"
+              >
+                <option value="">Tous les statuts ({orders.length})</option>
+                {Object.entries(statusLabel).map(([value, label]) => {
+                  const count = orders.filter((o) => o.status === value).length;
+                  return (
+                    <option key={value} value={value}>
+                      {label} ({count})
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#002141]">Date de début</label>
+              <input
+                type="date"
+                value={orderDateFromFilter}
+                onChange={(e) => setOrderDateFromFilter(e.target.value)}
+                className="admin-input mt-1 w-full"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#002141]">Date de fin</label>
+              <input
+                type="date"
+                value={orderDateToFilter}
+                onChange={(e) => setOrderDateToFilter(e.target.value)}
+                className="admin-input mt-1 w-full"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[#002141]/10 pt-4">
+            <div className="flex items-center gap-3">
+              <label className="text-xs font-semibold text-[#002141] flex items-center gap-2">
+                <span>Trier par :</span>
+                <select
+                  value={orderSort}
+                  onChange={(e) => setOrderSort(e.target.value as any)}
+                  className="admin-input py-1 text-xs"
+                >
+                  <option value="date_desc">Date (Récente → Ancienne)</option>
+                  <option value="date_asc">Date (Ancienne → Récente)</option>
+                  <option value="total_desc">Montant (Décroissant)</option>
+                  <option value="total_asc">Montant (Croissant)</option>
+                  <option value="customer_asc">Client (A-Z)</option>
+                  <option value="status">Statut</option>
+                </select>
+              </label>
+            </div>
+
+            {(orderSearch || orderStatusFilter || orderDateFromFilter || orderDateToFilter) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setOrderSearch('');
+                  setOrderStatusFilter('');
+                  setOrderDateFromFilter('');
+                  setOrderDateToFilter('');
+                }}
+                className="text-xs text-[#AC854B] hover:underline flex items-center gap-1 font-medium"
+              >
+                <X className="h-3.5 w-3.5" /> Réinitialiser les filtres
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Orders List Table */}
+        {orders.length === 0 ? (
+          <EmptyState
+            title="Aucune commande enregistrée"
+            body="Les commandes passées par les clients du portail apparaîtront ici avec synchronisation Supabase en temps réel."
+          />
+        ) : visibleOrders.length === 0 ? (
+          <EmptyState title="Aucune commande trouvée" body="Aucune commande ne correspond aux critères de filtre sélectionnés." />
+        ) : (
+          <div className="overflow-hidden border border-[#002141]/15 bg-white shadow-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead>
+                  <tr className="border-b border-[#002141]/12 bg-[#F8F9FA] text-xs uppercase tracking-wider text-[#002141]">
+                    <th className="py-3.5 px-4 font-semibold">N° & Date</th>
+                    <th className="py-3.5 px-4 font-semibold">Client</th>
+                    <th className="py-3.5 px-4 font-semibold">Reglement</th>
+                    <th className="py-3.5 px-4 font-semibold">Montant Total</th>
+                    <th className="py-3.5 px-4 font-semibold">Statut</th>
+                    <th className="py-3.5 px-4 font-semibold">Preuve / Ref Livraison</th>
+                    <th className="py-3.5 px-4 font-semibold text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#002141]/10">
+                  {visibleOrders.map((order) => {
+                    const statusBadgeClass = getStatusBadgeClass(order.status);
+                    const itemsCount = Array.isArray(order.order_items) ? order.order_items.length : 0;
+                    return (
+                      <tr key={order.id} className="hover:bg-[#FDFBF7] transition-colors">
+                        <td className="py-4 px-4 align-top">
+                          <p className="font-mono font-bold text-[#002141]">{order.order_number || order.id.slice(0, 8)}</p>
+                          <p className="mt-1 text-xs text-[#3A3A3A] flex items-center gap-1">
+                            <Clock className="h-3 w-3 text-[#3A3A3A]/60" />
+                            {order.created_at ? new Date(order.created_at).toLocaleString('fr-FR') : '—'}
+                          </p>
+                          <p className="mt-1 text-[11px] text-[#AC854B] font-medium">
+                            {itemsCount} article{itemsCount > 1 ? 's' : ''}
+                          </p>
+                        </td>
+
+                        <td className="py-4 px-4 align-top">
+                          <p className="font-semibold text-[#002141]">{order.customer_name || 'Client Anonyme'}</p>
+                          <p className="text-xs text-[#3A3A3A]">{order.customer_email || 'Sans e-mail'}</p>
+                          {order.customer_phone && <p className="text-xs text-[#3A3A3A]">{order.customer_phone}</p>}
+                          {(order.shipping_address || order.delivery_address) && (
+                            <p className="mt-1 text-[11px] text-[#3A3A3A]/70 flex items-center gap-1 truncate max-w-xs">
+                              <MapPin className="h-3 w-3 shrink-0" />
+                              {order.shipping_address || order.delivery_address}
+                            </p>
+                          )}
+                        </td>
+
+                        <td className="py-4 px-4 align-top">
+                          <p className="text-xs font-semibold text-[#002141] flex items-center gap-1">
+                            <CreditCard className="h-3.5 w-3.5 text-[#AC854B]" />
+                            {order.payment_method || 'Mobile Money / Cash'}
+                          </p>
+                          {order.payment_reference && (
+                            <p className="mt-1 text-xs font-mono text-[#3A3A3A]">Réf: {order.payment_reference}</p>
+                          )}
+                        </td>
+
+                        <td className="py-4 px-4 align-top">
+                          <p className="font-playfair font-bold text-[#002141] text-base">{formatXOF(order.total_xof)}</p>
+                        </td>
+
+                        <td className="py-4 px-4 align-top">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold border ${statusBadgeClass}`}>
+                            <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                            {statusLabel[order.status] || order.status}
+                          </span>
+                        </td>
+
+                        <td className="py-4 px-4 align-top">
+                          {order.delivery_reference ? (
+                            <p className="text-xs font-mono font-medium text-[#002141] flex items-center gap-1">
+                              <FileCheck className="h-3.5 w-3.5 text-emerald-700 shrink-0" />
+                              {order.delivery_reference}
+                            </p>
+                          ) : order.delivery_proof_url ? (
+                            <a
+                              href={order.delivery_proof_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-[#AC854B] hover:underline flex items-center gap-1"
+                            >
+                              <FileCheck className="h-3.5 w-3.5 shrink-0" /> Preuve de livraison
+                            </a>
+                          ) : (
+                            <span className="text-xs italic text-gray-400">Non renseignée</span>
+                          )}
+                        </td>
+
+                        <td className="py-4 px-4 align-top text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openOrderDetail(order)}
+                              className="admin-secondary-button py-1 px-3 text-xs flex items-center gap-1"
+                            >
+                              <Eye className="h-3.5 w-3.5" /> Détails & Statut
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedOrder(order);
+                                setShowOrderPrintModal(true);
+                              }}
+                              className="admin-icon-button p-1.5"
+                              title="Imprimer le récapitulatif"
+                            >
+                              <Printer className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ORDER DETAIL & STATUS CHANGE DRAWER / MODAL */}
+        {selectedOrder && !showOrderPrintModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#002141]/60 p-4 backdrop-blur-xs overflow-y-auto">
+            <div className="relative my-8 w-full max-w-4xl border border-[#002141]/20 bg-white p-6 md:p-8 shadow-2xl max-h-[90vh] overflow-y-auto">
+              {/* Modal Header */}
+              <div className="flex items-start justify-between border-b border-[#002141]/12 pb-5">
+                <div>
+                  <div className="flex items-center gap-3">
+                    <h2 className="font-playfair text-2xl font-bold text-[#002141]">
+                      Commande #{selectedOrder.order_number || selectedOrder.id.slice(0, 8)}
+                    </h2>
+                    <span className={`px-2.5 py-0.5 text-xs font-semibold border ${getStatusBadgeClass(selectedOrder.status)}`}>
+                      {statusLabel[selectedOrder.status] || selectedOrder.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[#3A3A3A]">
+                    Passée le {selectedOrder.created_at ? new Date(selectedOrder.created_at).toLocaleString('fr-FR') : '—'}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowOrderPrintModal(true)}
+                    className="admin-secondary-button text-xs flex items-center gap-1.5"
+                  >
+                    <Printer className="h-3.5 w-3.5" /> Imprimer récapitulatif
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedOrder(null)}
+                    className="p-2 text-[#3A3A3A] hover:text-[#002141]"
+                    aria-label="Fermer"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Grid Layout for Details */}
+              <div className="mt-6 grid gap-6 md:grid-cols-2">
+                {/* Client Information */}
+                <div className="border border-[#002141]/10 p-4 bg-[#F8F9FA]">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#002141] flex items-center gap-1.5 mb-3">
+                    <User className="h-4 w-4 text-[#AC854B]" /> Informations Client
+                  </h3>
+                  <div className="space-y-1.5 text-sm text-[#3A3A3A]">
+                    <p><strong className="text-[#002141]">Nom :</strong> {selectedOrder.customer_name || 'Non renseigné'}</p>
+                    <p><strong className="text-[#002141]">E-mail :</strong> {selectedOrder.customer_email || 'Non renseigné'}</p>
+                    <p><strong className="text-[#002141]">Téléphone :</strong> {selectedOrder.customer_phone || 'Non renseigné'}</p>
+                    <p><strong className="text-[#002141]">Commune / Zone :</strong> {selectedOrder.commune || selectedOrder.city || 'Abidjan'}</p>
+                  </div>
+                </div>
+
+                {/* Delivery Information */}
+                <div className="border border-[#002141]/10 p-4 bg-[#F8F9FA]">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#002141] flex items-center gap-1.5 mb-3">
+                    <Truck className="h-4 w-4 text-[#AC854B]" /> Livraison & Remise
+                  </h3>
+                  <div className="space-y-1.5 text-sm text-[#3A3A3A]">
+                    <p>
+                      <strong className="text-[#002141]">Adresse de livraison :</strong>{' '}
+                      {selectedOrder.shipping_address || selectedOrder.delivery_address || 'À convenir'}
+                    </p>
+                    <p>
+                      <strong className="text-[#002141]">Référence coursier / remise :</strong>{' '}
+                      {selectedOrder.delivery_reference ? (
+                        <span className="font-mono font-semibold text-emerald-800">{selectedOrder.delivery_reference}</span>
+                      ) : (
+                        <span className="italic text-gray-400">Non renseignée</span>
+                      )}
+                    </p>
+                    {selectedOrder.delivery_proof_url && (
+                      <p>
+                        <strong className="text-[#002141]">Preuve de remise :</strong>{' '}
+                        <a href={selectedOrder.delivery_proof_url} target="_blank" rel="noreferrer" className="text-[#AC854B] underline">
+                          Voir la preuve d'émargement
+                        </a>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment & Financial Summary */}
+              <div className="mt-6 border border-[#002141]/10 p-4 bg-[#F8F9FA]">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#002141] flex items-center gap-1.5 mb-3">
+                  <CreditCard className="h-4 w-4 text-[#AC854B]" /> Paiement & Règlement
+                </h3>
+                <div className="grid gap-4 sm:grid-cols-3 text-sm text-[#3A3A3A]">
+                  <div>
+                    <span className="block text-xs text-[#3A3A3A]/70">Mode de paiement</span>
+                    <strong className="text-[#002141]">{selectedOrder.payment_method || 'Mobile Money / Wave / Cash'}</strong>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-[#3A3A3A]/70">Référence transaction</span>
+                    <strong className="font-mono text-[#002141]">{selectedOrder.payment_reference || 'Non spécifiée'}</strong>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-[#3A3A3A]/70">Montant total</span>
+                    <strong className="font-playfair text-lg text-[#002141]">{formatXOF(selectedOrder.total_xof)}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Items Snapshot Table */}
+              <div className="mt-6">
+                <h3 className="text-sm font-bold text-[#002141] mb-3">Articles commandés (Snapshot au moment de l'achat)</h3>
+                <div className="overflow-x-auto border border-[#002141]/12">
+                  <table className="w-full text-left text-sm border-collapse">
+                    <thead>
+                      <tr className="border-b border-[#002141]/10 bg-[#F8F9FA] text-xs font-semibold text-[#002141]">
+                        <th className="p-3">Produit</th>
+                        <th className="p-3">Référence / SKU</th>
+                        <th className="p-3 text-right">Prix unitaire</th>
+                        <th className="p-3 text-center">Quantité</th>
+                        <th className="p-3 text-right">Sous-total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#002141]/10">
+                      {Array.isArray(selectedOrder.order_items) && selectedOrder.order_items.length > 0 ? (
+                        selectedOrder.order_items.map((item: AnyRecord, idx: number) => (
+                          <tr key={item.id || idx}>
+                            <td className="p-3">
+                              <p className="font-semibold text-[#002141]">{item.product_name || item.name || 'Article'}</p>
+                              {item.variant_label && <p className="text-xs text-[#AC854B]">{item.variant_label}</p>}
+                            </td>
+                            <td className="p-3 font-mono text-xs text-[#3A3A3A]">{item.product_ref || item.sku || '—'}</td>
+                            <td className="p-3 text-right text-[#3A3A3A]">{formatXOF(item.unit_price_xof || item.price || 0)}</td>
+                            <td className="p-3 text-center font-bold text-[#002141]">{item.quantity || 1}</td>
+                            <td className="p-3 text-right font-semibold text-[#002141]">
+                              {formatXOF((item.unit_price_xof || item.price || 0) * (item.quantity || 1))}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="p-4 text-center text-xs text-[#3A3A3A]">
+                            Aucun détail d'article disponible pour cette commande.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Manual Status Update Section */}
+              <div className="mt-6 border-t border-[#002141]/15 pt-6">
+                <h3 className="text-sm font-bold text-[#002141] flex items-center gap-2">
+                  <SlidersHorizontal className="h-4 w-4 text-[#AC854B]" /> Modifier le statut de la commande
+                </h3>
+
+                {statusChangeError && (
+                  <div className="mt-3 p-3 bg-red-50 border border-red-200 text-xs text-red-800 font-medium flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />
+                    <span>{statusChangeError}</span>
+                  </div>
+                )}
+
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#002141]">Sélectionner le nouveau statut</label>
+                    <select
+                      value={statusChangeTargetStatus}
+                      onChange={(e) => {
+                        setStatusChangeTargetStatus(e.target.value);
+                        setStatusChangeError('');
+                      }}
+                      className="admin-input mt-1 w-full"
+                    >
+                      {Object.entries(statusLabel).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-[#002141]">
+                      Référence / Preuve de livraison{' '}
+                      {statusChangeTargetStatus === 'delivered' && <span className="text-red-700 font-bold">* (Obligatoire)</span>}
+                    </label>
+                    <input
+                      type="text"
+                      value={orderDeliveryRefForm}
+                      onChange={(e) => {
+                        setOrderDeliveryRefForm(e.target.value);
+                        setStatusChangeError('');
+                      }}
+                      placeholder="Ex: Bordereau #BL-9481 / Code coursier / Emargement"
+                      className="admin-input mt-1 w-full"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-semibold text-[#002141]">Note d'audit interne (Journalisée)</label>
+                    <input
+                      type="text"
+                      value={statusChangeNote}
+                      onChange={(e) => setStatusChangeNote(e.target.value)}
+                      placeholder="Commentaire explicatif sur ce changement de statut (visible dans l'historique admin)..."
+                      className="admin-input mt-1 w-full"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    disabled={savingOrderStatus}
+                    onClick={() =>
+                      void updateOrderStatusFull(
+                        selectedOrder,
+                        statusChangeTargetStatus,
+                        orderDeliveryRefForm,
+                        orderDeliveryProofForm,
+                        statusChangeNote
+                      )
+                    }
+                    className="admin-primary-button disabled:opacity-50"
+                  >
+                    {savingOrderStatus ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+                    Enregistrer le nouveau statut
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Change History Audit Timeline */}
+              <div className="mt-6 border-t border-[#002141]/12 pt-6">
+                <h3 className="text-sm font-bold text-[#002141] mb-3 flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-[#AC854B]" /> Historique des changements de statut (Journalisé)
+                </h3>
+                {Array.isArray(selectedOrder.status_history) && selectedOrder.status_history.length > 0 ? (
+                  <div className="space-y-3">
+                    {selectedOrder.status_history
+                      .slice()
+                      .reverse()
+                      .map((entry: AnyRecord, index: number) => (
+                        <div key={`${entry.timestamp}-${index}`} className="border-l-2 border-[#AC854B] pl-3 py-1">
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="font-semibold text-[#002141]">
+                              {statusLabel[entry.status] || entry.status}
+                            </span>
+                            <span className="text-[#3A3A3A]/60">•</span>
+                            <span className="text-[#3A3A3A]">
+                              {entry.timestamp ? new Date(entry.timestamp).toLocaleString('fr-FR') : '—'}
+                            </span>
+                          </div>
+                          {entry.note && <p className="mt-1 text-xs text-[#3A3A3A] italic">{entry.note}</p>}
+                        </div>
+                      ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[#3A3A3A] italic">Aucun changement enregistré pour l'instant.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PRINTABLE ORDER SUMMARY MODAL */}
+        {selectedOrder && showOrderPrintModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#002141]/80 p-4 overflow-y-auto">
+            <div className="relative my-6 w-full max-w-3xl border border-[#002141] bg-white p-8 shadow-2xl">
+              {/* Action Buttons Header (Hidden during print) */}
+              <div className="mb-6 flex items-center justify-between border-b pb-4 print:hidden">
+                <h3 className="font-playfair text-xl font-bold text-[#002141]">Aperçu de l'Impression</h3>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="admin-primary-button text-xs flex items-center gap-2"
+                  >
+                    <Printer className="h-4 w-4" /> Lancer l'impression
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowOrderPrintModal(false)}
+                    className="admin-secondary-button text-xs"
+                  >
+                    Fermer
+                  </button>
+                </div>
+              </div>
+
+              {/* PRINT VOUCHER CONTENT */}
+              <div className="printable-order-voucher font-serif text-[#002141]">
+                {/* Invoice Header */}
+                <div className="flex items-start justify-between border-b-2 border-[#002141] pb-4">
+                  <div>
+                    <h1 className="font-playfair text-2xl font-bold tracking-widest text-[#002141]">HERITAGE ABIDJAN</h1>
+                    <p className="text-xs uppercase tracking-wider text-[#AC854B]">Haute Horlogerie & Parfumerie d'Exception</p>
+                    <p className="mt-1 text-xs text-gray-600">Abidjan, Côte d'Ivoire • Contact: +225 07 00 00 00 00</p>
+                  </div>
+                  <div className="text-right">
+                    <h2 className="text-lg font-bold text-[#002141]">BON DE COMMANDE</h2>
+                    <p className="font-mono text-sm font-bold">N° {selectedOrder.order_number || selectedOrder.id.slice(0, 8)}</p>
+                    <p className="text-xs text-gray-600">
+                      Date: {selectedOrder.created_at ? new Date(selectedOrder.created_at).toLocaleDateString('fr-FR') : '—'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Customer & Delivery Section */}
+                <div className="mt-6 grid grid-cols-2 gap-6 text-xs">
+                  <div className="border border-gray-300 p-3">
+                    <p className="font-bold uppercase tracking-wider text-[#002141] mb-2 border-b pb-1">Client</p>
+                    <p className="font-semibold text-sm">{selectedOrder.customer_name || 'Client'}</p>
+                    <p>E-mail: {selectedOrder.customer_email || '—'}</p>
+                    <p>Téléphone: {selectedOrder.customer_phone || '—'}</p>
+                  </div>
+
+                  <div className="border border-gray-300 p-3">
+                    <p className="font-bold uppercase tracking-wider text-[#002141] mb-2 border-b pb-1">Livraison & Règlement</p>
+                    <p><strong>Adresse:</strong> {selectedOrder.shipping_address || selectedOrder.delivery_address || 'Abidjan'}</p>
+                    <p><strong>Règlement:</strong> {selectedOrder.payment_method || 'Mobile Money / Cash'}</p>
+                    <p><strong>Réf. Livraison:</strong> {selectedOrder.delivery_reference || 'En cours'}</p>
+                  </div>
+                </div>
+
+                {/* Articles Table */}
+                <div className="mt-6">
+                  <table className="w-full text-left text-xs border-collapse border border-gray-300">
+                    <thead>
+                      <tr className="bg-gray-100 uppercase text-gray-800 border-b border-gray-300">
+                        <th className="p-2 border-r border-gray-300">Article</th>
+                        <th className="p-2 border-r border-gray-300 text-right">Prix Unitaire</th>
+                        <th className="p-2 border-r border-gray-300 text-center">Qté</th>
+                        <th className="p-2 text-right">Total XOF</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Array.isArray(selectedOrder.order_items) && selectedOrder.order_items.length > 0 ? (
+                        selectedOrder.order_items.map((item: AnyRecord, i: number) => (
+                          <tr key={i} className="border-b border-gray-200">
+                            <td className="p-2 border-r border-gray-300 font-semibold">{item.product_name || item.name}</td>
+                            <td className="p-2 border-r border-gray-300 text-right">{formatXOF(item.unit_price_xof || item.price || 0)}</td>
+                            <td className="p-2 border-r border-gray-300 text-center font-bold">{item.quantity || 1}</td>
+                            <td className="p-2 text-right font-bold">
+                              {formatXOF((item.unit_price_xof || item.price || 0) * (item.quantity || 1))}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={4} className="p-3 text-center italic">
+                            Détails des articles non spécifiés
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Total */}
+                <div className="mt-4 flex justify-end">
+                  <div className="border border-[#002141] p-3 text-right min-w-[220px]">
+                    <span className="text-xs uppercase text-gray-600 block">Total de la Commande</span>
+                    <strong className="font-playfair text-xl text-[#002141] font-bold">{formatXOF(selectedOrder.total_xof)}</strong>
+                  </div>
+                </div>
+
+                {/* Signatures Footer */}
+                <div className="mt-12 grid grid-cols-2 gap-8 text-center text-xs pt-8 border-t border-gray-300">
+                  <div>
+                    <p className="font-bold">Pour la Maison HERITAGE</p>
+                    <div className="h-16 border-b border-dashed border-gray-400 mt-2" />
+                    <p className="mt-1 text-gray-500">Cachet & Signature</p>
+                  </div>
+                  <div>
+                    <p className="font-bold">Émargement / Client ou Coursier</p>
+                    <div className="h-16 border-b border-dashed border-gray-400 mt-2" />
+                    <p className="mt-1 text-gray-500">Nom & Signature de réception</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  };
 
   const renderAdministrators = () => <><PanelHeader eyebrow="Accès sécurisé" title="Administrateurs" description="Gérez les comptes actifs et créez des codes à usage unique, valides pendant une heure." action={<button type="button" onClick={() => void generateInvitation()} className="admin-primary-button"><KeyRound className="h-4 w-4" /> Générer un code</button>} />{generatedCode && <div className="mb-6 border border-[#AC854B] bg-[#fffaf0] p-5"><p className="text-sm font-semibold text-[#002141]">Code d’invitation à transmettre une seule fois</p><code className="mt-3 block select-all break-all bg-[#002141] p-4 text-lg font-bold tracking-[0.12em] text-[#D6BB8F]">{generatedCode}</code><p className="mt-3 text-xs text-[#3A3A3A]">Il expirera dans une heure. Conservez-le hors des canaux publics.</p></div>}<div className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]"><section className="border border-[#002141]/15 bg-white"><h2 className="border-b border-[#002141]/10 p-5 font-playfair text-2xl font-semibold">Comptes administrateur</h2>{administrators.map((account) => <article key={account.id} className="flex items-center justify-between gap-4 border-b border-[#002141]/10 p-5"><div><p className="font-semibold">{account.full_name || 'Administrateur'} · {account.is_active ? 'Actif' : 'Révoqué'}</p><p className="text-sm text-[#3A3A3A]">{account.email}</p><p className="mt-1 text-xs text-[#3A3A3A]">Créé le {account.created_at ? new Date(account.created_at).toLocaleDateString('fr-FR') : '—'} · Dernière connexion : {account.last_signed_in_at ? new Date(account.last_signed_in_at).toLocaleString('fr-FR') : 'Jamais'}</p></div><button type="button" onClick={async () => { try { await adminRequest(`/administrators/${account.id}`, { method: 'PATCH', body: { is_active: !account.is_active } }); await loadTab('administrators'); notify(account.is_active ? 'Compte désactivé.' : 'Compte réactivé.'); } catch (error) { notify(error instanceof Error ? error.message : 'Action impossible.'); } }} className={account.is_active ? 'admin-secondary-button' : 'admin-primary-button'}>{account.is_active ? 'Désactiver' : 'Réactiver'}</button></article>)}</section><section className="border border-[#002141]/15 bg-white"><h2 className="border-b border-[#002141]/10 p-5 font-playfair text-2xl font-semibold">Codes récents</h2>{invitations.length === 0 ? <p className="p-5 text-sm text-[#3A3A3A]">Aucun code créé.</p> : invitations.map((invitation) => <article key={invitation.id} className="flex items-center justify-between gap-3 border-b border-[#002141]/10 p-5"><div><p className="text-sm font-semibold">{invitation.used_at ? 'Utilisé' : invitation.revoked_at ? 'Révoqué' : new Date(invitation.expires_at) > new Date() ? 'Valide' : 'Expiré'}</p><p className="mt-1 text-xs text-[#3A3A3A]">Expire le {new Date(invitation.expires_at).toLocaleString('fr-FR')}</p></div>{!invitation.used_at && !invitation.revoked_at && new Date(invitation.expires_at) > new Date() && <button type="button" onClick={async () => { await adminRequest(`/invitations/${invitation.id}/revoke`, { method: 'PATCH' }); await loadTab('administrators'); notify('Code révoqué.'); }} className="admin-icon-button text-red-800" aria-label="Révoquer"><Trash2 className="h-4 w-4" /></button>}</article>)}</section></div>{auditLogs.length > 0 && <section className="mt-6 border border-[#002141]/15 bg-white"><h2 className="border-b border-[#002141]/10 p-5 font-playfair text-2xl font-semibold">Journal d’activité récent</h2><div className="divide-y divide-[#002141]/10">{auditLogs.map((entry) => <p key={entry.id} className="p-4 text-sm text-[#3A3A3A]">{entry.created_at ? new Date(entry.created_at).toLocaleString('fr-FR') : '—'} · {entry.action} · {entry.entity_type}</p>)}</div></section>}</>;
 

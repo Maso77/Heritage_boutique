@@ -1241,6 +1241,20 @@ app.get('/api/admin/orders', async (_req: AdminRequest, res: Response) => {
   }
 });
 
+app.get('/api/admin/orders/:id', async (req: AdminRequest, res: Response) => {
+  try {
+    const { data, error } = await getSupabaseAdmin()
+      .from('orders')
+      .select('*, order_items(*)')
+      .eq('id', req.params.id)
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch {
+    sendError(res, 404, 'Commande introuvable.');
+  }
+});
+
 app.get('/api/admin/orders/export.csv', async (_req: AdminRequest, res: Response) => {
   try {
     const { data, error } = await getSupabaseAdmin().from('orders')
