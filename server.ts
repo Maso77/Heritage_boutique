@@ -43,6 +43,19 @@ const CONTACT_SUBJECTS = new Set([
   'Suivi de commande',
   'Autre demande'
 ]);
+const PRODUCT_CATEGORIES = new Set(['montres', 'parfums', 'lunettes']);
+const ORDER_STATUSES = new Set([
+  'pending_payment',
+  'payment_pending',
+  'paid',
+  'processing',
+  'shipped_or_ready',
+  'delivered',
+  'cancelled',
+  'refunded',
+  'payment_failed'
+]);
+const DELIVERY_MODES = new Set(['livraison_abidjan', 'retrait_yopougon']);
 
 function limitAdminRegistration(req: Request, res: Response, next: NextFunction) {
   const forwarded = req.header('x-forwarded-for')?.split(',')[0]?.trim();
@@ -254,12 +267,12 @@ function productPayload(body: Record<string, unknown>, adminId: string) {
   const reference = suppliedReference || sku;
   const salePrice = body.sale_price_xof === '' || body.sale_price_xof === null
     ? null
-    : numberValue(body.sale_price_xof, 0);
-  const regularPrice = numberValue(body.regular_price_xof, 0);
+    : integerValue(body.sale_price_xof, 0);
+  const regularPrice = integerValue(body.regular_price_xof, 0);
   const stockQuantity = integerValue(body.stock_quantity, 0);
   const lowStockThreshold = integerValue(body.low_stock_threshold, 2);
   const stockPolicy = text(body.stock_policy, 30) === 'on_order' ? 'on_order' : 'standard';
-  const category = text(body.category, 80) || 'montres';
+  const category = text(body.category, 80).toLowerCase() || 'montres';
 
   return {
     name,
@@ -270,7 +283,7 @@ function productPayload(body: Record<string, unknown>, adminId: string) {
     category,
     short_description: text(body.short_description, 1000) || null,
     description_html: sanitizeHtml(body.description_html),
-    purchase_price_xof: numberValue(body.purchase_price_xof, 0),
+    purchase_price_xof: integerValue(body.purchase_price_xof, 0),
     regular_price_xof: regularPrice,
     sale_price_xof: salePrice,
     stock_quantity: stockQuantity,
@@ -289,10 +302,12 @@ function productPayload(body: Record<string, unknown>, adminId: string) {
     // remains compatible during the transition to the richer model.
     price_xof: salePrice ?? regularPrice,
     stock_count: stockQuantity,
-    stock_status: stockQuantity > 0 ? 'En stock' : 'Rupture de stock',
-    primary_image: optionalUrl(body.primary_image) || text(body.primary_image, 2000) || undefined,
+    stock_status: stockStatus(stockQuantity, lowStockThreshold, stockPolicy),
+    // `primary_image` is only a compatibility mirror of a media asset. It is
+    // never accepted as an independent public image source.
+    primary_image: '',
     value_story_title: text(body.value_story_title, 300) || null,
-    value_story_text: text(body.value_story_text, 6000) || null,
+    value_story_text: sanitizeHtml(body.value_story_text) || null,
     provenance_summary: text(body.provenance_summary, 2000) || null,
     warranty_summary: text(body.warranty_summary, 2000) || null,
     delivery_summary: text(body.delivery_summary, 2000) || null,
@@ -300,18 +315,192 @@ function productPayload(body: Record<string, unknown>, adminId: string) {
   };
 }
 
-async function validatePublishableProduct(payload: ReturnType<typeof productPayload>) {
-  if (payload.status !== 'published') return null;
-  if (!payload.name || !payload.category || numberValue(payload.regular_price_xof) <= 0) {
-    return 'Un produit publié doit avoir un nom, une catégorie et un prix normal de vente supérieur à zéro.';
+function validEmail(value: string) {
+  return /^\S+@\S+\.\S+$/.test(value);
+}
+
+function jsonArray(value: unknown): Record<string, any>[] {
+  if (Array.isArray(value)) return value.filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object'));
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object')) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function orderNumber() {
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  return `HRT-${date}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+}
+
+async function appendOrderStatusEvent(
+  orderId: string,
+  status: string,
+  actor: { id?: string | null; name: string; source: 'customer' | 'administrator' | 'system' },
+  note: string | null,
+  deliveryReference: string | null,
+  deliveryProofUrl: string | null
+) {
+  try {
+    const { error } = await getSupabaseAdmin().from('order_status_events').insert({
+      order_id: orderId,
+      status,
+      actor_id: actor.id || null,
+      actor_name: text(actor.name, 180) || 'Système',
+      source: actor.source,
+      note: note || null,
+      delivery_reference: deliveryReference || null,
+      delivery_proof_url: deliveryProofUrl || null
+    });
+    if (error) throw error;
+  } catch (error: any) {
+    // The JSON history is kept as a compatibility audit trail until the
+    // dedicated order_status_events migration has been applied.
+    const code = String(error?.code || '');
+    if (!['42P01', 'PGRST204', 'PGRST205'].includes(code)) {
+      console.warn('Unable to append order status event:', error?.message || error);
+    }
+  }
+}
+
+function mediaIdsFromBody(body: Record<string, unknown>) {
+  const raw = Array.isArray(body.media_ids) ? body.media_ids : [];
+  return [...new Set(raw.map((id) => text(id, 80)).filter(Boolean))];
+}
+
+type ProductVariantInput = {
+  product_id: string;
+  name: string;
+  sku: string | null;
+  options: Record<string, unknown> | unknown[];
+  purchase_price_xof: number | null;
+  sale_price_xof: number | null;
+  stock_quantity: number;
+  is_active: boolean;
+};
+
+function variantsFromBody(body: Record<string, unknown>, productId: string): ProductVariantInput[] {
+  const raw = Array.isArray(body.variants) ? body.variants : [];
+  const skuSet = new Set<string>();
+  const variants = raw
+    .map((candidate): ProductVariantInput => {
+      const variant = candidate && typeof candidate === 'object' ? candidate as Record<string, unknown> : {};
+      const sku = text(variant.sku, 100) || null;
+      if (sku) {
+        const key = sku.toLocaleLowerCase('fr-FR');
+        if (skuSet.has(key)) throw new Error('Chaque variante doit avoir un SKU unique.');
+        skuSet.add(key);
+      }
+      return {
+        product_id: productId,
+        name: text(variant.name, 160),
+        sku,
+        options: jsonValue(variant.options, {}),
+        purchase_price_xof: variant.purchase_price_xof === '' || variant.purchase_price_xof === null
+          ? null
+          : integerValue(variant.purchase_price_xof, 0),
+        sale_price_xof: variant.sale_price_xof === '' || variant.sale_price_xof === null
+          ? null
+          : integerValue(variant.sale_price_xof, 0),
+        stock_quantity: integerValue(variant.stock_quantity, 0),
+        is_active: variant.is_active !== false
+      };
+    })
+    .filter((variant) => variant.name);
+  return variants;
+}
+
+async function validateProductGallery(productId: string, mediaIds: string[], primaryMediaId: string | null, required: boolean) {
+  if (!mediaIds.length) return required ? 'Un produit publié doit comporter au moins une image.' : null;
+  if (!primaryMediaId || !mediaIds.includes(primaryMediaId)) {
+    return 'Choisissez une image principale parmi les images rattachées au produit.';
+  }
+
+  const { data: assets, error } = await getSupabaseAdmin()
+    .from('media_assets')
+    .select('id, alt_text, is_ai_generated, product_id')
+    .in('id', mediaIds);
+
+  if (error || (assets || []).length !== mediaIds.length) {
+    return 'Une ou plusieurs images sélectionnées ne sont plus disponibles.';
+  }
+  if ((assets || []).some((asset: any) => !text(asset.alt_text, 300) || asset.is_ai_generated)) {
+    return 'Chaque image doit avoir un texte alternatif et ne peut pas être générée par IA.';
+  }
+  if ((assets || []).some((asset: any) => asset.product_id && String(asset.product_id) !== String(productId))) {
+    return 'Une image sélectionnée est déjà rattachée à un autre produit. Retirez-la d’abord de cette autre fiche.';
+  }
+  return null;
+}
+
+async function syncProductMedia(productId: string, mediaIds: string[], primaryMediaId: string | null) {
+  const admin = getSupabaseAdmin();
+  const galleryError = await validateProductGallery(productId, mediaIds, primaryMediaId, false);
+  if (galleryError) throw new Error(galleryError);
+
+  const { data: assets, error: assetsError } = mediaIds.length
+    ? await admin.from('media_assets').select('id, public_url').in('id', mediaIds)
+    : { data: [], error: null };
+  if (assetsError) throw assetsError;
+
+  const { error: unlinkError } = await admin.from('media_assets').update({ product_id: null }).eq('product_id', productId);
+  if (unlinkError) throw unlinkError;
+  const { error: unlinkRelationsError } = await admin.from('product_media').delete().eq('product_id', productId);
+  if (unlinkRelationsError) throw unlinkRelationsError;
+
+  for (const [index, mediaId] of mediaIds.entries()) {
+    const { error } = await admin.from('media_assets').update({ product_id: productId, sort_order: index }).eq('id', mediaId);
+    if (error) throw error;
+  }
+  if (mediaIds.length) {
+    const { error } = await admin.from('product_media').insert(mediaIds.map((mediaId, position) => ({ product_id: productId, media_id: mediaId, position })));
+    if (error) throw error;
+  }
+
+  const primaryAsset = (assets || []).find((asset: any) => String(asset.id) === String(primaryMediaId));
+  const { error: productError } = await admin
+    .from('products')
+    .update({ primary_media_id: primaryMediaId, primary_image: primaryAsset?.public_url || '' })
+    .eq('id', productId);
+  if (productError) throw productError;
+}
+
+async function replaceProductVariants(productId: string, variants: ProductVariantInput[]) {
+  const admin = getSupabaseAdmin();
+  const { error: deleteError } = await admin.from('product_variants').delete().eq('product_id', productId);
+  if (deleteError) throw deleteError;
+  if (!variants.length) return;
+  const { error: insertError } = await admin.from('product_variants').insert(variants);
+  if (insertError) throw insertError;
+}
+
+async function validatePublishableProduct(
+  payload: ReturnType<typeof productPayload>,
+  mediaIds?: string[],
+  productId?: string
+) {
+  if (!PRODUCT_CATEGORIES.has(payload.category)) {
+    return 'La catégorie doit être Montres, Parfums ou Lunettes.';
   }
   if (payload.sale_price_xof !== null && (
     numberValue(payload.sale_price_xof) <= 0 || numberValue(payload.sale_price_xof) >= numberValue(payload.regular_price_xof)
   )) {
     return 'Le prix promotionnel doit être positif et strictement inférieur au prix normal.';
   }
-  if (!payload.primary_media_id && !payload.primary_image) {
+  if (payload.status !== 'published') return null;
+  if (!payload.name || numberValue(payload.regular_price_xof) <= 0) {
+    return 'Un produit publié doit avoir un nom, une catégorie et un prix normal de vente supérieur à zéro.';
+  }
+  if (!payload.primary_media_id) {
     return 'Un produit publié doit comporter au moins une image principale.';
+  }
+  if (mediaIds && productId) {
+    const galleryError = await validateProductGallery(productId, mediaIds, payload.primary_media_id, true);
+    if (galleryError) return galleryError;
   }
   if (payload.primary_media_id) {
     const { data: media, error } = await getSupabaseAdmin()
@@ -552,12 +741,14 @@ async function hydratePublishedProducts(rows: Record<string, any>[]) {
     throw ownedMediaResult.error || primaryMediaResult.error || variantsResult.error;
   }
   const byProduct = new Map<string, any[]>();
-  (ownedMediaResult.data || []).forEach((asset: any) => {
+  (ownedMediaResult.data || []).filter((asset: any) => Boolean(text(asset.alt_text, 300))).forEach((asset: any) => {
     const entries = byProduct.get(String(asset.product_id)) || [];
     entries.push(asset);
     byProduct.set(String(asset.product_id), entries);
   });
-  const byMediaId = new Map((primaryMediaResult.data || []).map((asset: any) => [String(asset.id), asset]));
+  const byMediaId = new Map((primaryMediaResult.data || [])
+    .filter((asset: any) => Boolean(text(asset.alt_text, 300)))
+    .map((asset: any) => [String(asset.id), asset]));
   const variantsByProduct = new Map<string, any[]>();
   (variantsResult.data || []).forEach((variant: any) => {
     const entries = variantsByProduct.get(String(variant.product_id)) || [];
@@ -824,98 +1015,164 @@ app.post('/api/public/analytics/wishlist', async (req: Request, res: Response) =
 });
 
 app.post('/api/public/orders', async (req: Request, res: Response) => {
-  const orderData = req.body;
-  if (!orderData || !orderData.order_number || (!orderData.customer_email && !orderData.customer_name)) {
-    return sendError(res, 400, 'Données de commande incomplètes.');
+  const authorization = req.header('authorization') || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  if (!token) return sendError(res, 401, 'Connectez-vous avant de finaliser votre commande.');
+
+  const orderData = req.body || {};
+  const customerName = text(orderData.customer_name, 180);
+  const customerPhone = text(orderData.customer_phone, 50);
+  const deliveryMode = text(orderData.delivery_mode, 50) || 'livraison_abidjan';
+  const customerCommune = text(orderData.customer_commune || orderData.commune, 100) || 'Abidjan';
+  const deliveryAddress = text(orderData.customer_delivery_address || orderData.delivery_address, 500);
+  const customerNotes = text(orderData.customer_notes || orderData.notes, 500) || null;
+
+  if (customerName.length < 2 || customerPhone.replace(/\D/g, '').length < 8) {
+    return sendError(res, 400, 'Veuillez renseigner votre nom complet et un numéro de téléphone valide.');
+  }
+  if (!DELIVERY_MODES.has(deliveryMode)) return sendError(res, 400, 'Mode de réception invalide.');
+  if (deliveryMode === 'livraison_abidjan' && deliveryAddress.length < 4) {
+    return sendError(res, 400, 'Veuillez renseigner votre adresse de livraison.');
+  }
+
+  const rawItems = Array.isArray(orderData.items) ? orderData.items : [];
+  if (!rawItems.length || rawItems.length > 20) {
+    return sendError(res, 400, 'Votre commande doit contenir entre un et vingt articles.');
+  }
+
+  const requestedQuantities = new Map<string, number>();
+  for (const rawItem of rawItems) {
+    const item = rawItem && typeof rawItem === 'object' ? rawItem as Record<string, unknown> : {};
+    const productId = text(item.product_id || (item.product as Record<string, unknown> | undefined)?.id, 80);
+    const quantity = integerValue(item.quantity, 0);
+    if (!productId || quantity < 1 || quantity > 20) {
+      return sendError(res, 400, 'Un article de votre panier est invalide. Actualisez la page puis réessayez.');
+    }
+    requestedQuantities.set(productId, (requestedQuantities.get(productId) || 0) + quantity);
   }
 
   try {
     const admin = getSupabaseAdmin();
-    const isUuid = (val: unknown) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
-    const rawUserId = text(orderData.user_id, 80);
-    const userId = isUuid(rawUserId) ? rawUserId : null;
+    const { data: authData, error: authError } = await admin.auth.getUser(token);
+    if (authError || !authData.user) {
+      return sendError(res, 401, 'Votre session a expiré. Connectez-vous de nouveau avant de commander.');
+    }
 
-    const rawItems = Array.isArray(orderData.items) ? orderData.items : [];
-    const formattedItems = rawItems.map((item: any) => ({
-      product_id: item.product_id || item.product?.id || null,
-      product_sku: text(item.product_sku || item.product?.sku, 80) || null,
-      product_name: text(item.product_name || item.product?.name, 255) || 'Article Horlogerie',
-      product_reference: text(item.product_reference || item.product_ref || item.product?.reference || item.product?.sku, 100) || null,
-      product_ref: text(item.product_ref || item.product_reference || item.product?.reference || item.product?.sku, 100) || null,
-      quantity: Math.max(1, Math.round(Number(item.quantity || 1))),
-      price_xof: Math.round(Number(item.price_xof || item.unit_price_xof || item.product?.priceXOF || 0)),
-      unit_price_xof: Math.round(Number(item.unit_price_xof || item.price_xof || item.product?.priceXOF || 0)),
-      image_url: text(item.image_url || item.product?.primaryImage, 500) || null
-    }));
+    const customerEmail = text(authData.user.email, 180).toLowerCase() || text(orderData.customer_email, 180).toLowerCase();
+    if (!validEmail(customerEmail)) {
+      return sendError(res, 400, 'Votre compte ne comporte pas d’adresse e-mail valide.');
+    }
 
-    const orderPayload: Record<string, any> = {
-      id: orderData.id || 'ord-' + Date.now(),
-      order_number: text(orderData.order_number, 50),
-      user_id: userId,
-      customer_name: text(orderData.customer_name, 180),
-      customer_email: text(orderData.customer_email, 255),
-      customer_phone: text(orderData.customer_phone, 50) || null,
-      customer_commune: text(orderData.customer_commune || orderData.commune, 100) || 'Abidjan',
-      customer_delivery_address: text(orderData.customer_delivery_address || orderData.delivery_address || orderData.shipping_address, 500) || null,
-      customer_notes: text(orderData.customer_notes || orderData.notes, 500) || null,
-      delivery_address: text(orderData.delivery_address || orderData.customer_delivery_address || orderData.shipping_address, 500) || null,
-      shipping_address: text(orderData.shipping_address || orderData.customer_delivery_address || orderData.delivery_address, 500) || null,
-      commune: text(orderData.commune || orderData.customer_commune, 100) || 'Abidjan',
-      notes: text(orderData.notes || orderData.customer_notes, 500) || null,
-      delivery_mode: text(orderData.delivery_mode, 50) || 'livraison_abidjan',
-      subtotal_xof: Math.round(Number(orderData.subtotal_xof || orderData.subtotalXOF || orderData.total_xof || 0)),
-      delivery_cost_xof: Math.round(Number(orderData.delivery_cost_xof || orderData.deliveryCostXOF || 0)),
-      total_xof: Math.round(Number(orderData.total_xof || orderData.totalXOF || 0)),
-      status: text(orderData.status, 40) || 'processing',
-      payment_method: text(orderData.payment_method || orderData.paymentMethod, 50) || 'commande_directe',
-      payment_reference: text(orderData.payment_reference || orderData.paymentReference, 180) || null,
-      status_history: Array.isArray(orderData.status_history) ? orderData.status_history : orderData.statusHistory || [],
-      order_items: formattedItems,
-      created_at: orderData.created_at || orderData.createdAt || new Date().toISOString()
+    const productIds = [...requestedQuantities.keys()];
+    const { data: products, error: productsError } = await admin
+      .from('products')
+      .select('id, name, sku, reference, regular_price_xof, sale_price_xof, stock_quantity, stock_policy, primary_image, status')
+      .in('id', productIds)
+      .eq('status', 'published');
+    if (productsError) throw productsError;
+
+    const productMap = new Map((products || []).map((product: any) => [String(product.id), product]));
+    if (productMap.size !== productIds.length) {
+      return sendError(res, 409, 'Un ou plusieurs articles ne sont plus disponibles. Actualisez votre panier puis réessayez.');
+    }
+
+    const orderItems = productIds.map((productId) => {
+      const product: any = productMap.get(productId);
+      const quantity = requestedQuantities.get(productId) || 0;
+      const regularPrice = integerValue(product.regular_price_xof);
+      const candidateSalePrice = integerValue(product.sale_price_xof);
+      const unitPrice = candidateSalePrice > 0 && candidateSalePrice < regularPrice ? candidateSalePrice : regularPrice;
+      const stockPolicy = text(product.stock_policy, 30) || 'tracked';
+
+      if (regularPrice < 1 || quantity < 1) throw new Error('Prix ou quantité produit invalide.');
+      if (stockPolicy !== 'on_order' && integerValue(product.stock_quantity) < quantity) {
+        const error: any = new Error(`Stock insuffisant pour « ${text(product.name, 255) || 'cet article'} ». `);
+        error.statusCode = 409;
+        throw error;
+      }
+
+      return {
+        product_id: String(product.id),
+        product_sku: text(product.sku, 80) || null,
+        product_name: text(product.name, 255) || 'Article HERITAGE',
+        product_reference: text(product.reference || product.sku, 100) || null,
+        product_ref: text(product.reference || product.sku, 100) || null,
+        quantity,
+        price_xof: unitPrice,
+        unit_price_xof: unitPrice,
+        image_url: text(product.primary_image, 1000) || null
+      };
+    });
+
+    const subtotal = orderItems.reduce((sum, item) => sum + item.unit_price_xof * item.quantity, 0);
+    const deliveryCost = deliveryMode === 'livraison_abidjan' ? 5000 : 0;
+    const now = new Date().toISOString();
+    const profileResult = await admin.from('profiles').select('full_name').eq('id', authData.user.id).maybeSingle();
+    const actorName = text(profileResult.data?.full_name, 180) || customerName;
+    const initialHistory = [{
+      status: 'pending_payment',
+      timestamp: now,
+      note: 'Commande créée par le client.',
+      actor_id: authData.user.id,
+      actor_name: actorName,
+      source: 'customer'
+    }];
+    const orderPayload = {
+      id: `ord-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+      order_number: orderNumber(),
+      user_id: authData.user.id,
+      customer_name: customerName,
+      customer_email: customerEmail,
+      customer_phone: customerPhone,
+      customer_commune: customerCommune,
+      customer_delivery_address: deliveryAddress || null,
+      customer_notes: customerNotes,
+      delivery_address: deliveryAddress || null,
+      shipping_address: deliveryAddress || null,
+      commune: customerCommune,
+      notes: customerNotes,
+      delivery_mode: deliveryMode,
+      subtotal_xof: subtotal,
+      delivery_cost_xof: deliveryCost,
+      total_xof: subtotal + deliveryCost,
+      status: 'pending_payment',
+      payment_method: text(orderData.payment_method || orderData.paymentMethod, 50) || 'transmission_whatsapp',
+      payment_reference: null,
+      status_history: initialHistory,
+      created_at: now
     };
 
-    let insertedOrder: any = null;
-    let { data, error: orderError } = await admin
+    const { data: insertedOrder, error: orderError } = await admin
       .from('orders')
-      .upsert(orderPayload)
+      .insert(orderPayload)
       .select()
       .single();
+    if (orderError || !insertedOrder) throw orderError || new Error('Commande non créée.');
 
-    if (orderError && orderError.message && orderError.message.includes('order_items')) {
-      const { order_items, ...fallbackPayload } = orderPayload;
-      const fallback = await admin
-        .from('orders')
-        .upsert(fallbackPayload)
-        .select()
-        .single();
-      data = fallback.data;
-      orderError = fallback.error;
+    const { error: itemsError } = await admin
+      .from('order_items')
+      .insert(orderItems.map((item) => ({ order_id: insertedOrder.id, ...item })));
+    if (itemsError) {
+      await admin.from('orders').delete().eq('id', insertedOrder.id);
+      throw itemsError;
     }
 
-    if (orderError) {
-      console.error('Error in POST /api/public/orders admin upsert:', orderError);
-      return sendError(res, 400, `Impossible d'enregistrer la commande dans Supabase: ${orderError.message}`);
-    }
+    await appendOrderStatusEvent(
+      insertedOrder.id,
+      'pending_payment',
+      { id: authData.user.id, name: actorName, source: 'customer' },
+      'Commande créée par le client.',
+      null,
+      null
+    );
 
-    insertedOrder = data;
-
-    // Insert order items table records
-    if (formattedItems.length > 0 && insertedOrder?.id) {
-      const itemsPayload = formattedItems.map((item) => ({
-        order_id: insertedOrder.id,
-        ...item
-      }));
-
-      const { error: itemsError } = await admin.from('order_items').insert(itemsPayload);
-      if (itemsError) {
-        console.warn('Warning inserting order_items in POST /api/public/orders:', itemsError.message);
-      }
-    }
-
-    res.status(201).json({ success: true, order: insertedOrder });
+    res.status(201).json({
+      success: true,
+      order: { ...insertedOrder, order_items: orderItems, items: orderItems, status_events: initialHistory }
+    });
   } catch (err: any) {
     console.error('Error in POST /api/public/orders:', err);
-    sendError(res, 500, 'L’enregistrement de la commande a échoué.');
+    sendError(res, err?.statusCode === 409 ? 409 : 400, err?.message || 'L’enregistrement de la commande a échoué.');
   }
 });
 
@@ -1131,23 +1388,45 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
 app.get('/api/admin/products', async (_req: AdminRequest, res: Response) => {
   try {
     const admin = getSupabaseAdmin();
-    let { data, error } = await admin
+    const { data, error } = await admin
       .from('products')
-      .select('*, product_variants(*), media_assets(*)')
+      .select('*')
       .order('updated_at', { ascending: false });
-
-    if (error) {
-      // Fallback if relation names are not yet cached in PostgREST
-      const fallback = await admin
-        .from('products')
-        .select('*')
-        .order('updated_at', { ascending: false });
-      data = fallback.data;
-      error = fallback.error;
-    }
-
     if (error) throw error;
-    res.json(data || []);
+
+    // Do not rely on PostgREST inferring an embedded relation here: legacy
+    // projects can have media_assets.product_id without a database foreign
+    // key. Loading the gallery explicitly keeps the admin catalogue reliable
+    // for both fresh and migrated Supabase projects.
+    const productIds = (data || []).map((product: any) => String(product.id));
+    const [mediaResult, variantsResult] = await Promise.all([
+      productIds.length
+        ? admin.from('media_assets').select('*').in('product_id', productIds).order('sort_order')
+        : Promise.resolve({ data: [], error: null }),
+      productIds.length
+        ? admin.from('product_variants').select('*').in('product_id', productIds).order('created_at')
+        : Promise.resolve({ data: [], error: null })
+    ]);
+    if (mediaResult.error || variantsResult.error) throw mediaResult.error || variantsResult.error;
+
+    const mediaByProduct = new Map<string, any[]>();
+    (mediaResult.data || []).forEach((media: any) => {
+      const entries = mediaByProduct.get(String(media.product_id)) || [];
+      entries.push(media);
+      mediaByProduct.set(String(media.product_id), entries);
+    });
+    const variantsByProduct = new Map<string, any[]>();
+    (variantsResult.data || []).forEach((variant: any) => {
+      const entries = variantsByProduct.get(String(variant.product_id)) || [];
+      entries.push(variant);
+      variantsByProduct.set(String(variant.product_id), entries);
+    });
+
+    res.json((data || []).map((product: any) => ({
+      ...product,
+      media_assets: mediaByProduct.get(String(product.id)) || [],
+      product_variants: variantsByProduct.get(String(product.id)) || []
+    })));
   } catch (error) {
     sendSupabaseFailure(res, error, 'Le catalogue est indisponible.');
   }
@@ -1155,16 +1434,31 @@ app.get('/api/admin/products', async (_req: AdminRequest, res: Response) => {
 
 app.post('/api/admin/products', async (req: AdminRequest, res: Response) => {
   const payload = productPayload(req.body || {}, req.admin!.id);
-  payload.primary_image ||= '';
+  const mediaIds = mediaIdsFromBody(req.body || {});
   if (!payload.name || !payload.slug) return sendError(res, 400, 'Le nom et le lien produit sont obligatoires.');
   const publicationError = await validatePublishableProduct(payload);
   if (publicationError) return sendError(res, 400, publicationError);
 
   try {
-    const { data, error } = await getSupabaseAdmin().from('products').insert(payload).select().single();
+    const admin = getSupabaseAdmin();
+    // A new product remains private while its gallery and variants are linked.
+    // This avoids a transient published product with no valid public photo.
+    const initialPayload = { ...payload, status: 'draft', primary_media_id: null, primary_image: '' };
+    const { data, error } = await admin.from('products').insert(initialPayload).select().single();
     if (error) throw error;
+    const galleryError = await validateProductGallery(data.id, mediaIds, payload.primary_media_id, payload.status === 'published');
+    if (galleryError) throw new Error(galleryError);
+    await syncProductMedia(data.id, mediaIds, payload.primary_media_id);
+    await replaceProductVariants(data.id, variantsFromBody(req.body || {}, data.id));
+    const { data: finalProduct, error: finalError } = await admin
+      .from('products')
+      .update({ status: payload.status })
+      .eq('id', data.id)
+      .select()
+      .single();
+    if (finalError) throw finalError;
     if (Number(payload.stock_quantity) !== 0) {
-      await getSupabaseAdmin().from('stock_movements').insert({
+      await admin.from('stock_movements').insert({
         product_id: data.id,
         quantity_delta: Number(payload.stock_quantity),
         reason: 'initial',
@@ -1173,14 +1467,16 @@ app.post('/api/admin/products', async (req: AdminRequest, res: Response) => {
       });
     }
     await writeAudit(req.admin!.id, 'created', 'product', data.id, { name: data.name });
-    res.status(201).json(data);
-  } catch {
-    sendError(res, 400, 'Impossible d’enregistrer ce produit. Vérifiez l’unicité du lien, SKU ou de la référence.');
+    res.status(201).json(finalProduct);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    sendError(res, 400, message || 'Impossible d’enregistrer ce produit. Vérifiez l’unicité du lien, SKU ou de la référence.');
   }
 });
 
 app.patch('/api/admin/products/:id', async (req: AdminRequest, res: Response) => {
   const payload = productPayload(req.body || {}, req.admin!.id);
+  const mediaIds = mediaIdsFromBody(req.body || {});
   delete (payload as { created_by?: string }).created_by;
   const publicationError = await validatePublishableProduct(payload);
   if (publicationError) return sendError(res, 400, publicationError);
@@ -1189,13 +1485,27 @@ app.patch('/api/admin/products/:id', async (req: AdminRequest, res: Response) =>
     const admin = getSupabaseAdmin();
     const { data: before, error: beforeError } = await admin.from('products').select('stock_quantity').eq('id', req.params.id).single();
     if (beforeError) throw beforeError;
+    const galleryError = await validateProductGallery(req.params.id, mediaIds, payload.primary_media_id, payload.status === 'published');
+    if (galleryError) return sendError(res, 400, galleryError);
+
+    // Keep the edited product private until its relationships are valid.
+    const pendingPayload = { ...payload, status: 'draft', primary_media_id: null, primary_image: '' };
     const { data, error } = await getSupabaseAdmin()
       .from('products')
-      .update(payload)
+      .update(pendingPayload)
       .eq('id', req.params.id)
       .select()
       .single();
     if (error) throw error;
+    await syncProductMedia(data.id, mediaIds, payload.primary_media_id);
+    await replaceProductVariants(data.id, variantsFromBody(req.body || {}, data.id));
+    const { data: finalProduct, error: finalError } = await admin
+      .from('products')
+      .update({ status: payload.status })
+      .eq('id', data.id)
+      .select()
+      .single();
+    if (finalError) throw finalError;
     const delta = Number(payload.stock_quantity) - Number(before.stock_quantity || 0);
     if (delta !== 0) {
       await admin.from('stock_movements').insert({
@@ -1207,9 +1517,10 @@ app.patch('/api/admin/products/:id', async (req: AdminRequest, res: Response) =>
       });
     }
     await writeAudit(req.admin!.id, 'updated', 'product', data.id, { name: data.name });
-    res.json(data);
-  } catch {
-    sendError(res, 400, 'La mise à jour du produit a échoué.');
+    res.json(finalProduct);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    sendError(res, 400, message || 'La mise à jour du produit a échoué.');
   }
 });
 
@@ -1273,71 +1584,41 @@ app.delete('/api/admin/products/:id', async (req: AdminRequest, res: Response) =
 });
 
 app.put('/api/admin/products/:id/variants', async (req: AdminRequest, res: Response) => {
-  const variants = Array.isArray(req.body?.variants) ? req.body.variants : [];
   const productId = req.params.id;
 
   try {
-    const admin = getSupabaseAdmin();
-    const { error: deleteError } = await admin.from('product_variants').delete().eq('product_id', productId);
-    if (deleteError) throw deleteError;
-
-    const prepared = variants
-      .map((variant: Record<string, unknown>) => ({
-        product_id: productId,
-        name: text(variant.name, 160),
-        sku: text(variant.sku, 100) || null,
-        options: jsonValue(variant.options, {}),
-        purchase_price_xof: variant.purchase_price_xof === '' ? null : numberValue(variant.purchase_price_xof, 0),
-        sale_price_xof: variant.sale_price_xof === '' ? null : numberValue(variant.sale_price_xof, 0),
-        stock_quantity: integerValue(variant.stock_quantity, 0),
-        is_active: variant.is_active !== false
-      }))
-      .filter((variant: { name: string }) => variant.name);
-
-    if (prepared.length) {
-      const { error: insertError } = await admin.from('product_variants').insert(prepared);
-      if (insertError) throw insertError;
-    }
+    const prepared = variantsFromBody(req.body || {}, productId);
+    await replaceProductVariants(productId, prepared);
 
     await writeAudit(req.admin!.id, 'updated_variants', 'product', productId, { count: prepared.length });
     res.json({ success: true, count: prepared.length });
-  } catch {
-    sendError(res, 400, 'La mise à jour des variantes a échoué.');
+  } catch (error) {
+    sendError(res, 400, error instanceof Error ? error.message : 'La mise à jour des variantes a échoué.');
   }
 });
 
 app.put('/api/admin/products/:id/media', async (req: AdminRequest, res: Response) => {
-  const mediaIds = Array.isArray(req.body?.media_ids) ? req.body.media_ids.map((id: unknown) => text(id, 80)).filter(Boolean) : [];
+  const mediaIds = mediaIdsFromBody(req.body || {});
   const primaryMediaId = text(req.body?.primary_media_id, 80) || mediaIds[0] || null;
   try {
     const admin = getSupabaseAdmin();
-    if (mediaIds.length) {
-      const { data: assets, error: assetsError } = await admin
-        .from('media_assets')
-        .select('id, alt_text, is_ai_generated')
-        .in('id', mediaIds);
-      if (assetsError || (assets || []).length !== mediaIds.length || (assets || []).some((asset: any) => !text(asset.alt_text, 300) || asset.is_ai_generated)) {
-        return sendError(res, 400, 'Chaque image doit avoir un texte alternatif et ne peut pas être générée par IA.');
-      }
-    }
-    const { error: unlinkError } = await admin.from('media_assets').update({ product_id: null }).eq('product_id', req.params.id);
-    if (unlinkError) throw unlinkError;
-    const { error: unlinkRelationsError } = await admin.from('product_media').delete().eq('product_id', req.params.id);
-    if (unlinkRelationsError) throw unlinkRelationsError;
-    for (const [index, mediaId] of mediaIds.entries()) {
-      const { error } = await admin.from('media_assets').update({ product_id: req.params.id, sort_order: index }).eq('id', mediaId);
-      if (error) throw error;
-    }
-    if (mediaIds.length) {
-      const { error: relationError } = await admin.from('product_media').insert(mediaIds.map((mediaId, position) => ({ product_id: req.params.id, media_id: mediaId, position })));
-      if (relationError) throw relationError;
-    }
-    const { error: productError } = await admin.from('products').update({ primary_media_id: primaryMediaId }).eq('id', req.params.id);
+    const { data: product, error: productError } = await admin.from('products').select('status').eq('id', req.params.id).single();
     if (productError) throw productError;
+    const galleryError = await validateProductGallery(req.params.id, mediaIds, primaryMediaId, product.status === 'published');
+    if (galleryError) return sendError(res, 400, galleryError);
+    if (product.status === 'published') {
+      const { error: hideError } = await admin.from('products').update({ status: 'draft' }).eq('id', req.params.id);
+      if (hideError) throw hideError;
+    }
+    await syncProductMedia(req.params.id, mediaIds, primaryMediaId);
+    if (product.status === 'published') {
+      const { error: republishError } = await admin.from('products').update({ status: 'published' }).eq('id', req.params.id);
+      if (republishError) throw republishError;
+    }
     await writeAudit(req.admin!.id, 'updated_media', 'product', req.params.id, { count: mediaIds.length });
     res.json({ success: true, media_ids: mediaIds, primary_media_id: primaryMediaId });
-  } catch {
-    sendError(res, 400, 'La galerie produit n’a pas pu être enregistrée.');
+  } catch (error) {
+    sendError(res, 400, error instanceof Error ? error.message : 'La galerie produit n’a pas pu être enregistrée.');
   }
 });
 
@@ -1423,7 +1704,8 @@ app.get('/api/admin/orders', async (_req: AdminRequest, res: Response) => {
       return {
         ...order,
         order_items: items,
-        items: items
+        items,
+        status_history: jsonArray(order.status_history)
       };
     });
 
@@ -1467,7 +1749,21 @@ app.get('/api/admin/orders/:id', async (req: AdminRequest, res: Response) => {
     }
     if (!Array.isArray(items)) items = [];
 
-    res.json({ ...orderData, order_items: items, items });
+    const eventsResult = await admin
+      .from('order_status_events')
+      .select('id, order_id, status, actor_id, actor_name, source, note, delivery_reference, delivery_proof_url, created_at')
+      .eq('order_id', orderData.id)
+      .order('created_at', { ascending: false });
+    const eventTableMissing = ['42P01', 'PGRST204', 'PGRST205'].includes(String(eventsResult.error?.code || ''));
+    if (eventsResult.error && !eventTableMissing) throw eventsResult.error;
+
+    res.json({
+      ...orderData,
+      order_items: items,
+      items,
+      status_history: jsonArray(orderData.status_history),
+      status_events: eventsResult.data || []
+    });
   } catch {
     sendError(res, 404, 'Commande introuvable.');
   }
@@ -1491,13 +1787,11 @@ app.get('/api/admin/orders/export.csv', async (_req: AdminRequest, res: Response
 
 app.patch('/api/admin/orders/:id', async (req: AdminRequest, res: Response) => {
   const status = text(req.body?.status, 40);
-  const deliveryReference = text(req.body?.delivery_reference, 180) || null;
-  const deliveryProofUrl = optionalUrl(req.body?.delivery_proof_url);
-  const allowed = ['pending_payment', 'payment_pending', 'paid', 'processing', 'shipped_or_ready', 'delivered', 'cancelled', 'refunded', 'payment_failed'];
-  if (!allowed.includes(status)) return sendError(res, 400, 'Statut de commande invalide.');
-  if (status === 'delivered' && !deliveryReference && !deliveryProofUrl) {
-    return sendError(res, 400, 'Une référence ou une preuve de livraison est obligatoire avant de marquer une commande comme livrée.');
-  }
+  const submittedReference = text(req.body?.delivery_reference, 180);
+  const submittedProofRaw = text(req.body?.delivery_proof_url, 2000);
+  const submittedProofUrl = optionalUrl(submittedProofRaw);
+  if (!ORDER_STATUSES.has(status)) return sendError(res, 400, 'Statut de commande invalide.');
+  if (submittedProofRaw && !submittedProofUrl) return sendError(res, 400, 'Le lien de preuve de remise doit être une URL HTTPS ou HTTP valide.');
 
   try {
     const admin = getSupabaseAdmin();
@@ -1508,12 +1802,22 @@ app.patch('/api/admin/orders/:id', async (req: AdminRequest, res: Response) => {
       .single();
     if (currentError) throw currentError;
 
-    const statusHistory = Array.isArray(current.status_history) ? current.status_history : [];
+    const deliveryReference = submittedReference || text(current.delivery_reference, 180) || null;
+    const deliveryProofUrl = submittedProofUrl || optionalUrl(current.delivery_proof_url) || null;
+    if (status === 'delivered' && !deliveryReference && !deliveryProofUrl) {
+      return sendError(res, 400, 'Une référence ou une preuve de livraison est obligatoire avant de marquer une commande comme livrée.');
+    }
+
+    const note = text(req.body?.note, 500) || `Statut mis à jour par ${req.admin!.full_name || 'un administrateur'}`;
+    const timestamp = new Date().toISOString();
+    const statusHistory = jsonArray(current.status_history);
     statusHistory.push({
       status,
-      timestamp: new Date().toISOString(),
-      note: text(req.body?.note, 500) || `Statut mis à jour par ${req.admin!.full_name || 'un administrateur'}`,
-      actor_id: req.admin!.id
+      timestamp,
+      note,
+      actor_id: req.admin!.id,
+      actor_name: req.admin!.full_name || req.admin!.email || 'Administrateur',
+      source: 'administrator'
     });
 
     const { data, error } = await admin
@@ -1521,17 +1825,26 @@ app.patch('/api/admin/orders/:id', async (req: AdminRequest, res: Response) => {
       .update({
         status,
         status_history: statusHistory,
-        delivery_reference: deliveryReference || current.delivery_reference || null,
-        delivery_proof_url: deliveryProofUrl || current.delivery_proof_url || null,
-        updated_at: new Date().toISOString()
+        delivery_reference: deliveryReference,
+        delivery_proof_url: deliveryProofUrl,
+        updated_at: timestamp
       })
       .eq('id', req.params.id)
       .select()
       .single();
     if (error) throw error;
+    await appendOrderStatusEvent(
+      req.params.id,
+      status,
+      { id: req.admin!.id, name: req.admin!.full_name || req.admin!.email || 'Administrateur', source: 'administrator' },
+      note,
+      deliveryReference,
+      deliveryProofUrl
+    );
     await writeAudit(req.admin!.id, 'updated_status', 'order', req.params.id, { status });
     res.json(data);
-  } catch {
+  } catch (error) {
+    console.error('Unable to update order status:', error);
     sendError(res, 400, 'La mise à jour de la commande a échoué.');
   }
 });

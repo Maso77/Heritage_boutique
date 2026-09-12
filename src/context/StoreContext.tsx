@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { CartItem, Order, OrderCustomer, OrderStatus, Product } from '../types';
-import { supabase, syncOrderToSupabase, updateOrderStatusInSupabase, fetchUserOrdersFromSupabase } from '../lib/supabase';
+import { supabase, syncOrderToSupabase, fetchUserOrdersFromSupabase } from '../lib/supabase';
 import { usePublicContent } from '../lib/public-content';
 
 interface StoreContextType {
@@ -21,8 +21,7 @@ interface StoreContextType {
   createOrder: (
     customer: OrderCustomer,
     paymentMethod?: string
-  ) => Order;
-  processPaymentWebhook: (orderId: string, success: boolean) => void;
+  ) => Promise<Order>;
   userEmail: string | null;
   loginUser: (email: string) => void;
   logoutUser: () => void;
@@ -223,84 +222,77 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     customer: OrderCustomer,
     paymentMethod: string = 'commande_directe'
   ): Promise<Order> => {
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const orderNumber = `HER-${dateStr}-${randomSuffix}`;
+    const cartSnapshot = cart.map((item) => ({ ...item, product: { ...item.product } }));
+    if (!cartSnapshot.length) throw new Error('Votre panier est vide.');
+
+    // Identifiants et montants provisoires uniquement : le serveur les remplace
+    // par les valeurs faisant foi de Supabase avant de confirmer la commande.
+    const provisionalReference = `HRT-${Date.now()}`;
     const deliveryCostXOF = customer.deliveryMode === 'livraison_abidjan' ? 5000 : 0;
     const totalXOF = cartSubtotal + deliveryCostXOF;
 
-    const newOrder: Order = {
+    const provisionalOrder: Order = {
       id: 'ord-' + Date.now(),
-      orderNumber,
+      orderNumber: provisionalReference,
       createdAt: new Date().toISOString(),
-      status: 'processing',
+      status: 'pending_payment',
       customer,
-      items: [...cart],
+      items: cartSnapshot,
       subtotalXOF: cartSubtotal,
       deliveryCostXOF,
       totalXOF,
       paymentMethod: paymentMethod as any,
       statusHistory: [
         {
-          status: 'processing',
+          status: 'pending_payment',
           timestamp: new Date().toISOString(),
-          note: 'Commande transmise et enregistrée avec succès à Abidjan.'
+          note: 'Commande en cours de vérification.'
         }
       ]
     };
 
-    setOrders((prev) => [newOrder, ...prev]);
-    setCurrentOrder(newOrder);
+    const persisted = await syncOrderToSupabase(provisionalOrder);
+    if (!persisted.success) throw persisted.error;
+
+    const serverOrder = persisted.order as Record<string, any>;
+    const serverItems = Array.isArray(serverOrder.order_items) ? serverOrder.order_items : [];
+    const pricesByProduct = new Map(serverItems.map((item: Record<string, any>) => [String(item.product_id), Number(item.unit_price_xof ?? item.price_xof)]));
+    const rawStatus = String(serverOrder.status || 'pending_payment') as OrderStatus;
+    const validStatuses: OrderStatus[] = ['pending_payment', 'payment_pending', 'paid', 'processing', 'shipped_or_ready', 'delivered', 'cancelled', 'refunded', 'payment_failed'];
+    const serverHistory = Array.isArray(serverOrder.status_history) ? serverOrder.status_history : [];
+    const confirmedOrder: Order = {
+      ...provisionalOrder,
+      id: String(serverOrder.id || provisionalOrder.id),
+      orderNumber: String(serverOrder.order_number || provisionalOrder.orderNumber),
+      createdAt: String(serverOrder.created_at || provisionalOrder.createdAt),
+      status: validStatuses.includes(rawStatus) ? rawStatus : 'pending_payment',
+      customer: {
+        ...customer,
+        email: String(serverOrder.customer_email || customer.email)
+      },
+      items: cartSnapshot.map((item) => {
+        const price = pricesByProduct.get(String(item.product.id));
+        return typeof price === 'number' && Number.isFinite(price) && price > 0
+          ? { ...item, product: { ...item.product, priceXOF: price } }
+          : item;
+      }),
+      subtotalXOF: Number(serverOrder.subtotal_xof ?? provisionalOrder.subtotalXOF),
+      deliveryCostXOF: Number(serverOrder.delivery_cost_xof ?? provisionalOrder.deliveryCostXOF),
+      totalXOF: Number(serverOrder.total_xof ?? provisionalOrder.totalXOF),
+      paymentMethod: String(serverOrder.payment_method || provisionalOrder.paymentMethod || ''),
+      statusHistory: serverHistory.length
+        ? serverHistory.map((entry: Record<string, any>) => ({
+            status: validStatuses.includes(entry.status as OrderStatus) ? entry.status as OrderStatus : 'pending_payment',
+            timestamp: String(entry.timestamp || serverOrder.created_at || provisionalOrder.createdAt),
+            note: String(entry.note || '')
+          }))
+        : provisionalOrder.statusHistory
+    };
+
+    setOrders((prev) => [confirmedOrder, ...prev]);
+    setCurrentOrder(confirmedOrder);
     setCart([]);
-
-    // Synchroniser avec Supabase et attendre la confirmation
-    try {
-      await syncOrderToSupabase(newOrder);
-    } catch (e) {
-      console.warn('Sync order warning:', e);
-    }
-    return newOrder;
-  };
-
-  const processPaymentWebhook = (orderId: string, success: boolean) => {
-    const nextStatus: OrderStatus = success ? 'paid' : 'payment_failed';
-    const note = success
-      ? 'Paiement vérifié avec succès par webhook sécurisé idempotent.'
-      : 'Échec de la transaction auprès du prestataire de paiement.';
-
-    // Synchroniser la mise à jour de statut avec Supabase
-    updateOrderStatusInSupabase(orderId, nextStatus, note);
-
-    setOrders((prev) =>
-      prev.map((ord) => {
-        if (ord.id === orderId) {
-          const updated: Order = {
-            ...ord,
-            status: nextStatus,
-            paymentReference: success
-              ? 'WAVE-' + Math.random().toString(36).substring(2, 10).toUpperCase()
-              : undefined,
-            statusHistory: [
-              ...ord.statusHistory,
-              {
-                status: nextStatus,
-                timestamp: new Date().toISOString(),
-                note
-              }
-            ]
-          };
-          if (currentOrder && currentOrder.id === orderId) {
-            setCurrentOrder(updated);
-          }
-          return updated;
-        }
-        return ord;
-      })
-    );
-
-    if (success) {
-      clearCart();
-    }
+    return confirmedOrder;
   };
 
   const loginUser = (email: string) => {
@@ -390,7 +382,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         currentOrder,
         setCurrentOrder,
         createOrder,
-        processPaymentWebhook,
         userEmail,
         loginUser,
         logoutUser,

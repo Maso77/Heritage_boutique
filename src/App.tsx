@@ -244,6 +244,10 @@ function AppContent() {
       return <LegalView type="confidentialite" navigate={navigate} />;
     }
 
+    if (currentRoute === '/cookies') {
+      return <LegalView type="cookies" navigate={navigate} />;
+    }
+
     if (currentRoute === '/livraison-retours') {
       return <LegalView type="livraison-retours" navigate={navigate} />;
     }

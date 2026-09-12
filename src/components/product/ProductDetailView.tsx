@@ -321,11 +321,12 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, n
               RÉCIT DE VALEUR
             </span>
             <h2 className="font-playfair text-xl sm:text-2xl font-bold text-[#002141] mb-4">
-              {product.valueStoryTitle}
+              {product.valueStoryTitle || 'Description de la pièce'}
             </h2>
-            <p className="text-sm sm:text-base text-[#3A3A3A] leading-relaxed">
-              {product.valueStoryText}
-            </p>
+            <div
+              className="product-rich-content text-sm sm:text-base text-[#3A3A3A] leading-relaxed"
+              dangerouslySetInnerHTML={{ __html: product.valueStoryText }}
+            />
           </div>
         </div>}
 

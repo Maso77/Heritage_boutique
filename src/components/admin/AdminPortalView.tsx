@@ -128,7 +128,6 @@ const emptyProduct = (): AnyRecord => ({
   reference: '',
   brand: '',
   category: 'montres',
-  custom_category: '',
   short_description: '',
   description_html: '',
   purchase_price_xof: '',
@@ -171,8 +170,9 @@ const toProductForm = (product: AnyRecord): AnyRecord => {
   return {
     ...emptyProduct(),
     ...product,
-    category: isStandardCat ? cat : 'autre',
-    custom_category: isStandardCat ? '' : cat,
+    // Existing legacy categories are moved to the closest supported catalogue
+    // entry when the record is next saved.
+    category: isStandardCat ? cat : 'montres',
     colors: toJsonText(product.colors),
     attributes: toJsonText(product.attributes, '{}'),
     faq: toJsonText(product.faq),
@@ -313,7 +313,7 @@ const RESOURCE_CONFIGS: Record<'reviews' | 'blogs' | 'faqs' | 'legal' | 'meta' |
     title: 'Méta description',
     description: 'Gérez les balises de chaque page éditoriale, hors fiches produit.',
     fields: [
-      { name: 'page_key', label: 'Page', type: 'select', required: true, options: [{ value: 'accueil', label: 'Accueil' }, { value: 'montres', label: 'Montres' }, { value: 'parfums', label: 'Parfums' }, { value: 'lunettes', label: 'Lunettes' }, { value: 'a-propos', label: 'À propos' }, { value: 'contact', label: 'Contact' }, { value: 'blog', label: 'Journal / Blog' }, { value: 'authenticite-provenance', label: 'Authenticité / provenance' }, { value: 'livraison-retours', label: 'Livraison / retours' }, { value: 'garantie-service', label: 'Garantie / service' }, { value: 'mentions-legales', label: 'Mentions légales' }, { value: 'cgv', label: 'CGV' }, { value: 'confidentialite', label: 'Confidentialité' }, { value: 'cookies', label: 'Cookies' }] },
+      { name: 'page_key', label: 'Page', type: 'select', required: true, options: [{ value: 'accueil', label: 'Accueil' }, { value: 'montres', label: 'Montres' }, { value: 'parfums', label: 'Parfums' }, { value: 'lunettes', label: 'Lunettes' }, { value: 'a-propos', label: 'À propos' }, { value: 'contact', label: 'Contact' }, { value: 'faq', label: 'Foire aux questions' }, { value: 'blog', label: 'Journal / Blog' }, { value: 'authenticite-provenance', label: 'Authenticité / provenance' }, { value: 'livraison-retours', label: 'Livraison / retours' }, { value: 'garantie-service', label: 'Garantie / service' }, { value: 'mentions-legales', label: 'Mentions légales' }, { value: 'cgv', label: 'CGV' }, { value: 'confidentialite', label: 'Confidentialité' }, { value: 'cookies', label: 'Cookies' }] },
       { name: 'title', label: 'Titre de la page', required: true },
       { name: 'description', label: 'Description, 160 caractères conseillés', type: 'textarea', required: true },
       { name: 'og_title', label: 'Titre de partage' },
@@ -853,8 +853,11 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [orderStatusFilter, setOrderStatusFilter] = useState('');
   const [orderDateFromFilter, setOrderDateFromFilter] = useState('');
   const [orderDateToFilter, setOrderDateToFilter] = useState('');
+  const [orderAmountMinFilter, setOrderAmountMinFilter] = useState('');
+  const [orderAmountMaxFilter, setOrderAmountMaxFilter] = useState('');
   const [orderSort, setOrderSort] = useState<'date_desc' | 'date_asc' | 'total_desc' | 'total_asc' | 'customer_asc' | 'status'>('date_desc');
   const [selectedOrder, setSelectedOrder] = useState<AnyRecord | null>(null);
+  const [orderDetailLoading, setOrderDetailLoading] = useState(false);
   const [showOrderPrintModal, setShowOrderPrintModal] = useState(false);
   const [orderDeliveryRefForm, setOrderDeliveryRefForm] = useState('');
   const [orderDeliveryProofForm, setOrderDeliveryProofForm] = useState('');
@@ -969,7 +972,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     const filtered = products.filter((product) => {
       const query = productSearch.trim().toLocaleLowerCase('fr-FR');
       const matchesSearch = !query || [product.name, product.reference, product.sku, product.brand].some((value) => String(value || '').toLocaleLowerCase('fr-FR').includes(query));
-      const matchesCategory = !productCategoryFilter || (productCategoryFilter === 'autre' ? !['montres', 'parfums', 'lunettes'].includes(product.category) : product.category === productCategoryFilter);
+      const matchesCategory = !productCategoryFilter || product.category === productCategoryFilter;
       const matchesStatus = !productStatusFilter || product.status === productStatusFilter;
 
       const stockQty = Number(product.stock_quantity ?? 0);
@@ -1022,8 +1025,12 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
       const fromTime = orderDateFromFilter ? new Date(orderDateFromFilter).getTime() : 0;
       const toTime = orderDateToFilter ? new Date(`${orderDateToFilter}T23:59:59`).getTime() : Infinity;
       const matchesDate = orderTime >= fromTime && orderTime <= toTime;
+      const minAmount = orderAmountMinFilter === '' ? 0 : Number(orderAmountMinFilter);
+      const maxAmount = orderAmountMaxFilter === '' ? Infinity : Number(orderAmountMaxFilter);
+      const amount = Number(order.total_xof || 0);
+      const matchesAmount = amount >= (Number.isFinite(minAmount) ? minAmount : 0) && amount <= (Number.isFinite(maxAmount) ? maxAmount : Infinity);
 
-      return matchesSearch && matchesStatus && matchesDate;
+      return matchesSearch && matchesStatus && matchesDate && matchesAmount;
     });
 
     return filtered.sort((a, b) => {
@@ -1034,7 +1041,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
       if (orderSort === 'status') return String(a.status || '').localeCompare(String(b.status || ''));
       return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
     });
-  }, [orders, orderSearch, orderStatusFilter, orderDateFromFilter, orderDateToFilter, orderSort]);
+  }, [orders, orderSearch, orderStatusFilter, orderDateFromFilter, orderDateToFilter, orderAmountMinFilter, orderAmountMaxFilter, orderSort]);
   const visibleUsers = useMemo(() => {
     const safeUsers = Array.isArray(users) ? users : [];
     const filtered = safeUsers.filter((user) => {
@@ -1105,7 +1112,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const saveProduct = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     try {
-      const finalCategory = productForm.category === 'autre' ? (productForm.custom_category?.trim() || 'autre') : productForm.category;
+      const finalCategory = productForm.category;
       const finalSlug = productForm.slug ? slugify(productForm.slug) : slugify(productForm.name);
 
       if (productForm.status === 'published') {
@@ -1128,19 +1135,12 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
       const finalPayload = {
         ...productForm,
         category: finalCategory,
-        slug: finalSlug
+        slug: finalSlug,
+        variants: readArray(productForm.variants)
       };
 
-      let product: AnyRecord;
-      if (editingProduct?.id) product = await adminRequest(`/products/${editingProduct.id}`, { method: 'PATCH', body: finalPayload });
-      else product = await adminRequest('/products', { method: 'POST', body: finalPayload });
-
-      const variants = JSON.parse(productForm.variants || '[]');
-      if (Array.isArray(variants)) await adminRequest(`/products/${product.id}/variants`, { method: 'PUT', body: { variants } });
-      const mediaIds = Array.isArray(productForm.media_ids) ? productForm.media_ids : [];
-      if (mediaIds.length || productForm.primary_media_id) {
-        await adminRequest(`/products/${product.id}/media`, { method: 'PUT', body: { media_ids: mediaIds, primary_media_id: productForm.primary_media_id || null } });
-      }
+      if (editingProduct?.id) await adminRequest(`/products/${editingProduct.id}`, { method: 'PATCH', body: finalPayload });
+      else await adminRequest('/products', { method: 'POST', body: finalPayload });
 
       setEditingProduct(null);
       setProductForm(emptyProduct());
@@ -1760,23 +1760,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                     <option value="montres">Montres</option>
                     <option value="parfums">Parfums (masqués si aucun produit publié)</option>
                     <option value="lunettes">Lunettes (masquées si aucun produit publié)</option>
-                    <option value="autre">Autre catégorie (à préciser)</option>
                   </select>
                 </label>
-
-                {productForm.category === 'autre' && (
-                  <label className="text-sm font-semibold text-[#002141]">
-                    Préciser la catégorie <span className="text-red-700">*</span>
-                    <input
-                      required
-                      type="text"
-                      value={productForm.custom_category || ''}
-                      onChange={(event) => setProductForm((current) => ({ ...current, custom_category: event.target.value }))}
-                      className="admin-input mt-2"
-                      placeholder="ex. Joaillerie, Accessoires..."
-                    />
-                  </label>
-                )}
 
                 {/* Marque */}
                 <label className="text-sm font-semibold text-[#002141]">
@@ -2017,13 +2002,20 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                                 type="text"
                                 value={asset.alt_text || ''}
                                 placeholder="Texte alternatif (obligatoire)*"
-                                onChange={async (e) => {
+                                onChange={(e) => {
                                   const newAlt = e.target.value;
                                   setMedia((current) => current.map((m) => (m.id === asset.id ? { ...m, alt_text: newAlt } : m)));
+                                }}
+                                onBlur={async (e) => {
+                                  const newAlt = e.target.value.trim();
+                                  if (!newAlt) {
+                                    notify('Le texte alternatif de chaque image est obligatoire.');
+                                    return;
+                                  }
                                   try {
                                     await adminRequest(`/media/${asset.id}`, { method: 'PATCH', body: { alt_text: newAlt } });
-                                  } catch {
-                                    /* quiet fail */
+                                  } catch (error) {
+                                    notify(error instanceof Error ? error.message : 'Le texte alternatif n’a pas été enregistré.');
                                   }
                                 }}
                                 className="admin-input text-xs py-1"
@@ -2238,20 +2230,30 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                 ) : (
                   <div className="space-y-2 max-h-48 overflow-y-auto">
                     {productReviews.map((rev) => (
-                      <div key={rev.id} className="border border-[#002141]/10 p-3 bg-[#FAF9F7] text-xs flex justify-between items-center gap-3">
+                      <div key={rev.id} className="border border-[#002141]/10 p-3 bg-[#FAF9F7] text-xs flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                         <div>
                           <p className="font-semibold text-[#002141]">
                             {rev.author_name} — {'★'.repeat(rev.rating)} ({rev.status})
                           </p>
-                          <p className="text-[#3A3A3A] mt-1">{rev.comment}</p>
+                          <p className="text-[#3A3A3A] mt-1">{rev.body}</p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => selectTab('reviews')}
-                          className="admin-secondary-button text-[11px] whitespace-nowrap"
-                        >
-                          Gérer les avis
-                        </button>
+                        <div className="flex flex-wrap gap-2">
+                          {rev.status !== 'approved' && (
+                            <button type="button" onClick={() => void moderateProductReview(rev, 'approved')} className="admin-secondary-button text-[11px] whitespace-nowrap">
+                              Approuver
+                            </button>
+                          )}
+                          {rev.status !== 'pending' && (
+                            <button type="button" onClick={() => void moderateProductReview(rev, 'pending')} className="admin-secondary-button text-[11px] whitespace-nowrap">
+                              Mettre en attente
+                            </button>
+                          )}
+                          {rev.status !== 'rejected' && (
+                            <button type="button" onClick={() => void moderateProductReview(rev, 'rejected')} className="admin-secondary-button text-[11px] whitespace-nowrap text-red-800">
+                              Refuser
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -2325,7 +2327,6 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                 <option value="montres">Montres</option>
                 <option value="parfums">Parfums</option>
                 <option value="lunettes">Lunettes</option>
-                <option value="autre">Autres catégories</option>
               </select>
             </label>
 
@@ -2611,10 +2612,12 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
         }
       });
 
-      setOrders((prev) => prev.map((o) => (o.id === order.id ? updated : o)));
-      if (selectedOrder?.id === order.id) {
-        setSelectedOrder(updated);
-      }
+      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, ...updated } : o)));
+      const detailedOrder = await adminRequest<AnyRecord>(`/orders/${order.id}`);
+      if (selectedOrder?.id === order.id) setSelectedOrder(detailedOrder);
+      setOrderDeliveryRefForm(detailedOrder.delivery_reference || '');
+      setOrderDeliveryProofForm(detailedOrder.delivery_proof_url || '');
+      setStatusChangeTargetStatus(detailedOrder.status || targetStatus);
       notify(`Commande ${updated.order_number || updated.id.slice(0, 8)} mise à jour : ${statusLabel[targetStatus] || targetStatus}.`);
       setStatusChangeNote('');
       setStatusChangeError('');
@@ -2626,13 +2629,26 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     }
   };
 
-  const openOrderDetail = (order: AnyRecord) => {
+  const openOrderDetail = async (order: AnyRecord, print = false) => {
     setSelectedOrder(order);
+    setShowOrderPrintModal(print);
     setOrderDeliveryRefForm(order.delivery_reference || '');
     setOrderDeliveryProofForm(order.delivery_proof_url || '');
     setStatusChangeTargetStatus(order.status || 'pending_payment');
     setStatusChangeNote('');
     setStatusChangeError('');
+    setOrderDetailLoading(true);
+    try {
+      const detailedOrder = await adminRequest<AnyRecord>(`/orders/${order.id}`);
+      setSelectedOrder(detailedOrder);
+      setOrderDeliveryRefForm(detailedOrder.delivery_reference || '');
+      setOrderDeliveryProofForm(detailedOrder.delivery_proof_url || '');
+      setStatusChangeTargetStatus(detailedOrder.status || 'pending_payment');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Le détail de la commande ne peut pas être chargé.');
+    } finally {
+      setOrderDetailLoading(false);
+    }
   };
 
   const renderOrders = () => {
@@ -2643,6 +2659,11 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     const totalRevenueXOF = orders
       .filter((o) => ['paid', 'processing', 'shipped_or_ready', 'delivered'].includes(o.status))
       .reduce((sum, o) => sum + Number(o.total_xof || 0), 0);
+    const selectedOrderTimeline = selectedOrder
+      ? (Array.isArray(selectedOrder.status_events) && selectedOrder.status_events.length > 0
+        ? selectedOrder.status_events
+        : (Array.isArray(selectedOrder.status_history) ? selectedOrder.status_history.slice().reverse() : []))
+      : [];
 
     return (
       <>
@@ -2744,6 +2765,33 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
             </div>
           </div>
 
+          <div className="grid gap-4 md:grid-cols-2 lg:max-w-[50%]">
+            <div>
+              <label className="block text-xs font-semibold text-[#002141]">Montant minimum (FCFA)</label>
+              <input
+                type="number"
+                min="0"
+                inputMode="numeric"
+                value={orderAmountMinFilter}
+                onChange={(e) => setOrderAmountMinFilter(e.target.value)}
+                placeholder="Ex. 100 000"
+                className="admin-input mt-1 w-full"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[#002141]">Montant maximum (FCFA)</label>
+              <input
+                type="number"
+                min="0"
+                inputMode="numeric"
+                value={orderAmountMaxFilter}
+                onChange={(e) => setOrderAmountMaxFilter(e.target.value)}
+                placeholder="Ex. 500 000"
+                className="admin-input mt-1 w-full"
+              />
+            </div>
+          </div>
+
           <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[#002141]/10 pt-4">
             <div className="flex items-center gap-3">
               <label className="text-xs font-semibold text-[#002141] flex items-center gap-2">
@@ -2763,7 +2811,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
               </label>
             </div>
 
-            {(orderSearch || orderStatusFilter || orderDateFromFilter || orderDateToFilter) && (
+            {(orderSearch || orderStatusFilter || orderDateFromFilter || orderDateToFilter || orderAmountMinFilter || orderAmountMaxFilter) && (
               <button
                 type="button"
                 onClick={() => {
@@ -2771,6 +2819,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                   setOrderStatusFilter('');
                   setOrderDateFromFilter('');
                   setOrderDateToFilter('');
+                  setOrderAmountMinFilter('');
+                  setOrderAmountMaxFilter('');
                 }}
                 className="text-xs text-[#AC854B] hover:underline flex items-center gap-1 font-medium"
               >
@@ -2784,7 +2834,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
         {orders.length === 0 ? (
           <EmptyState
             title="Aucune commande enregistrée"
-            body="Les commandes passées par les clients du portail apparaîtront ici avec synchronisation Supabase en temps réel."
+            body="Les commandes confirmées depuis le passage en caisse apparaîtront ici dès leur enregistrement dans Supabase."
           />
         ) : visibleOrders.length === 0 ? (
           <EmptyState title="Aucune commande trouvée" body="Aucune commande ne correspond aux critères de filtre sélectionnés." />
@@ -2877,17 +2927,14 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                           <div className="flex items-center justify-end gap-2">
                             <button
                               type="button"
-                              onClick={() => openOrderDetail(order)}
+                              onClick={() => void openOrderDetail(order)}
                               className="admin-secondary-button py-1 px-3 text-xs flex items-center gap-1"
                             >
                               <Eye className="h-3.5 w-3.5" /> Détails & Statut
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
-                                setSelectedOrder(order);
-                                setShowOrderPrintModal(true);
-                              }}
+                              onClick={() => void openOrderDetail(order, true)}
                               className="admin-icon-button p-1.5"
                               title="Imprimer le récapitulatif"
                             >
@@ -2918,6 +2965,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                     <span className={`px-2.5 py-0.5 text-xs font-semibold border ${getStatusBadgeClass(selectedOrder.status)}`}>
                       {statusLabel[selectedOrder.status] || selectedOrder.status}
                     </span>
+                    {orderDetailLoading && <LoaderCircle className="h-4 w-4 animate-spin text-[#AC854B]" aria-label="Chargement du détail" />}
                   </div>
                   <p className="mt-1 text-xs text-[#3A3A3A]">
                     Passée le {selectedOrder.created_at ? new Date(selectedOrder.created_at).toLocaleString('fr-FR') : '—'}
@@ -2954,7 +3002,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                     <p><strong className="text-[#002141]">Nom :</strong> {selectedOrder.customer_name || 'Non renseigné'}</p>
                     <p><strong className="text-[#002141]">E-mail :</strong> {selectedOrder.customer_email || 'Non renseigné'}</p>
                     <p><strong className="text-[#002141]">Téléphone :</strong> {selectedOrder.customer_phone || 'Non renseigné'}</p>
-                    <p><strong className="text-[#002141]">Commune / Zone :</strong> {selectedOrder.commune || selectedOrder.city || 'Abidjan'}</p>
+                    <p><strong className="text-[#002141]">Commune / Zone :</strong> {selectedOrder.customer_commune || selectedOrder.commune || selectedOrder.city || 'Abidjan'}</p>
+                    {selectedOrder.customer_notes && <p><strong className="text-[#002141]">Note client :</strong> {selectedOrder.customer_notes}</p>}
                   </div>
                 </div>
 
@@ -2966,7 +3015,11 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                   <div className="space-y-1.5 text-sm text-[#3A3A3A]">
                     <p>
                       <strong className="text-[#002141]">Adresse de livraison :</strong>{' '}
-                      {selectedOrder.shipping_address || selectedOrder.delivery_address || 'À convenir'}
+                      {selectedOrder.customer_delivery_address || selectedOrder.shipping_address || selectedOrder.delivery_address || 'À convenir'}
+                    </p>
+                    <p>
+                      <strong className="text-[#002141]">Mode de réception :</strong>{' '}
+                      {selectedOrder.delivery_mode === 'retrait_yopougon' ? 'Retrait à Yopougon' : 'Livraison à Abidjan'}
                     </p>
                     <p>
                       <strong className="text-[#002141]">Référence coursier / remise :</strong>{' '}
@@ -2993,7 +3046,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                 <h3 className="text-xs font-bold uppercase tracking-wider text-[#002141] flex items-center gap-1.5 mb-3">
                   <CreditCard className="h-4 w-4 text-[#AC854B]" /> Paiement & Règlement
                 </h3>
-                <div className="grid gap-4 sm:grid-cols-3 text-sm text-[#3A3A3A]">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5 text-sm text-[#3A3A3A]">
                   <div>
                     <span className="block text-xs text-[#3A3A3A]/70">Mode de paiement</span>
                     <strong className="text-[#002141]">{selectedOrder.payment_method || 'Mobile Money / Wave / Cash'}</strong>
@@ -3001,6 +3054,14 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                   <div>
                     <span className="block text-xs text-[#3A3A3A]/70">Référence transaction</span>
                     <strong className="font-mono text-[#002141]">{selectedOrder.payment_reference || 'Non spécifiée'}</strong>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-[#3A3A3A]/70">Sous-total articles</span>
+                    <strong className="text-[#002141]">{formatXOF(selectedOrder.subtotal_xof)}</strong>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-[#3A3A3A]/70">Livraison</span>
+                    <strong className="text-[#002141]">{formatXOF(selectedOrder.delivery_cost_xof)}</strong>
                   </div>
                   <div>
                     <span className="block text-xs text-[#3A3A3A]/70">Montant total</span>
@@ -3031,7 +3092,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                               <p className="font-semibold text-[#002141]">{item.product_name || item.name || 'Article'}</p>
                               {item.variant_label && <p className="text-xs text-[#AC854B]">{item.variant_label}</p>}
                             </td>
-                            <td className="p-3 font-mono text-xs text-[#3A3A3A]">{item.product_ref || item.sku || '—'}</td>
+                            <td className="p-3 font-mono text-xs text-[#3A3A3A]">{item.product_ref || item.product_reference || item.product_sku || item.sku || '—'}</td>
                             <td className="p-3 text-right text-[#3A3A3A]">{formatXOF(item.unit_price_xof || item.price || 0)}</td>
                             <td className="p-3 text-center font-bold text-[#002141]">{item.quantity || 1}</td>
                             <td className="p-3 text-right font-semibold text-[#002141]">
@@ -3085,7 +3146,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
 
                   <div>
                     <label className="block text-xs font-semibold text-[#002141]">
-                      Référence / Preuve de livraison{' '}
+                      Référence de remise / livraison{' '}
                       {statusChangeTargetStatus === 'delivered' && <span className="text-red-700 font-bold">* (Obligatoire)</span>}
                     </label>
                     <input
@@ -3096,6 +3157,23 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                         setStatusChangeError('');
                       }}
                       placeholder="Ex: Bordereau #BL-9481 / Code coursier / Emargement"
+                      className="admin-input mt-1 w-full"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-[#002141]">
+                      Lien de preuve de remise{' '}
+                      {statusChangeTargetStatus === 'delivered' && <span className="text-[#3A3A3A]/70">(alternative à la référence)</span>}
+                    </label>
+                    <input
+                      type="url"
+                      value={orderDeliveryProofForm}
+                      onChange={(e) => {
+                        setOrderDeliveryProofForm(e.target.value);
+                        setStatusChangeError('');
+                      }}
+                      placeholder="https://… (émargement, bon signé)"
                       className="admin-input mt-1 w-full"
                     />
                   </div>
@@ -3115,7 +3193,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                 <div className="mt-4 flex justify-end">
                   <button
                     type="button"
-                    disabled={savingOrderStatus}
+                    disabled={savingOrderStatus || orderDetailLoading}
                     onClick={() =>
                       void updateOrderStatusFull(
                         selectedOrder,
@@ -3138,25 +3216,25 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                 <h3 className="text-sm font-bold text-[#002141] mb-3 flex items-center gap-2">
                   <Clock className="h-4 w-4 text-[#AC854B]" /> Historique des changements de statut (Journalisé)
                 </h3>
-                {Array.isArray(selectedOrder.status_history) && selectedOrder.status_history.length > 0 ? (
+                {selectedOrderTimeline.length > 0 ? (
                   <div className="space-y-3">
-                    {selectedOrder.status_history
-                      .slice()
-                      .reverse()
-                      .map((entry: AnyRecord, index: number) => (
-                        <div key={`${entry.timestamp}-${index}`} className="border-l-2 border-[#AC854B] pl-3 py-1">
+                    {selectedOrderTimeline.map((entry: AnyRecord, index: number) => (
+                        <div key={`${entry.id || entry.created_at || entry.timestamp}-${index}`} className="border-l-2 border-[#AC854B] pl-3 py-1">
                           <div className="flex items-center gap-2 text-xs">
                             <span className="font-semibold text-[#002141]">
                               {statusLabel[entry.status] || entry.status}
                             </span>
                             <span className="text-[#3A3A3A]/60">•</span>
                             <span className="text-[#3A3A3A]">
-                              {entry.timestamp ? new Date(entry.timestamp).toLocaleString('fr-FR') : '—'}
+                              {entry.created_at || entry.timestamp ? new Date(entry.created_at || entry.timestamp).toLocaleString('fr-FR') : '—'}
                             </span>
                           </div>
                           {entry.note && <p className="mt-1 text-xs text-[#3A3A3A] italic">{entry.note}</p>}
+                          {(entry.actor_name || entry.actor_id) && (
+                            <p className="mt-1 text-[11px] text-[#3A3A3A]/70">Par : {entry.actor_name || entry.actor_id}</p>
+                          )}
                         </div>
-                      ))}
+                    ))}
                   </div>
                 ) : (
                   <p className="text-xs text-[#3A3A3A] italic">Aucun changement enregistré pour l'instant.</p>
@@ -3216,12 +3294,14 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                     <p className="font-semibold text-sm">{selectedOrder.customer_name || 'Client'}</p>
                     <p>E-mail: {selectedOrder.customer_email || '—'}</p>
                     <p>Téléphone: {selectedOrder.customer_phone || '—'}</p>
+                    <p>Commune: {selectedOrder.customer_commune || selectedOrder.commune || '—'}</p>
                   </div>
 
                   <div className="border border-gray-300 p-3">
                     <p className="font-bold uppercase tracking-wider text-[#002141] mb-2 border-b pb-1">Livraison & Règlement</p>
-                    <p><strong>Adresse:</strong> {selectedOrder.shipping_address || selectedOrder.delivery_address || 'Abidjan'}</p>
+                    <p><strong>Adresse:</strong> {selectedOrder.customer_delivery_address || selectedOrder.shipping_address || selectedOrder.delivery_address || 'À convenir'}</p>
                     <p><strong>Règlement:</strong> {selectedOrder.payment_method || 'Mobile Money / Cash'}</p>
+                    <p><strong>Réf. paiement:</strong> {selectedOrder.payment_reference || '—'}</p>
                     <p><strong>Réf. Livraison:</strong> {selectedOrder.delivery_reference || 'En cours'}</p>
                   </div>
                 </div>
@@ -3263,6 +3343,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                 {/* Total */}
                 <div className="mt-4 flex justify-end">
                   <div className="border border-[#002141] p-3 text-right min-w-[220px]">
+                    <span className="text-xs text-gray-600 block">Articles : {formatXOF(selectedOrder.subtotal_xof)}</span>
+                    <span className="text-xs text-gray-600 block">Livraison : {formatXOF(selectedOrder.delivery_cost_xof)}</span>
                     <span className="text-xs uppercase text-gray-600 block">Total de la Commande</span>
                     <strong className="font-playfair text-xl text-[#002141] font-bold">{formatXOF(selectedOrder.total_xof)}</strong>
                   </div>
@@ -5080,6 +5162,23 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
         </section>
       )}
     </>;
+  };
+
+  const moderateProductReview = async (review: AnyRecord, status: 'approved' | 'pending' | 'rejected') => {
+    try {
+      await adminRequest(`/resources/reviews/${review.id}`, {
+        method: 'PATCH',
+        body: {
+          ...review,
+          status,
+          manually_validated: status === 'approved' ? true : Boolean(review.manually_validated)
+        }
+      });
+      await loadTab('products');
+      notify(status === 'approved' ? 'Avis approuvé.' : status === 'rejected' ? 'Avis refusé.' : 'Avis remis en attente.');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'La modération de l’avis a échoué.');
+    }
   };
 
   let content: React.ReactNode = renderDashboard();

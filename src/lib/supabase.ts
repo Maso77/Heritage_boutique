@@ -180,126 +180,51 @@ export async function fetchCurrentSessionProfile(): Promise<UserProfile | null> 
 }
 
 /**
- * Enregistrement d'une commande dans Supabase
+ * Création contrôlée d'une commande. Le navigateur n'envoie jamais un prix,
+ * un total ni un statut faisant foi : l'API les recalcule à partir du
+ * catalogue publié avant d'écrire le snapshot dans Supabase.
  */
-export async function syncOrderToSupabase(order: Order, userId?: string) {
+export async function syncOrderToSupabase(order: Order) {
   try {
-    const isUuid = (val: unknown) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
-    let currentUserId = (userId && isUuid(userId)) ? userId : null;
-    if (!currentUserId) {
-      try {
-        const { data: authData } = await supabase.auth.getUser();
-        if (authData?.user?.id && isUuid(authData.user.id)) {
-          currentUserId = authData.user.id;
-        }
-      } catch {
-        // Ignore auth error
-      }
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (sessionError || !accessToken) {
+      return { success: false as const, error: new Error('Connectez-vous avant de finaliser votre commande.') };
     }
 
-    const itemsPayload = order.items.map((item) => ({
-      product_id: item.product.id,
-      product_sku: item.product.sku,
-      product_name: item.product.name,
-      product_reference: item.product.reference || item.product.sku,
-      product_ref: item.product.reference || item.product.sku,
-      quantity: item.quantity,
-      price_xof: item.product.priceXOF,
-      unit_price_xof: item.product.priceXOF,
-      image_url: item.product.primaryImage
-    }));
-
-    const orderPayload = {
-      id: order.id,
-      order_number: order.orderNumber,
-      user_id: currentUserId,
-      customer_name: order.customer.fullName,
-      customer_email: order.customer.email,
-      customer_phone: order.customer.phone,
-      customer_commune: order.customer.commune,
-      customer_delivery_address: order.customer.deliveryAddress,
-      customer_notes: order.customer.notes || null,
-      delivery_address: order.customer.deliveryAddress,
-      shipping_address: order.customer.deliveryAddress,
-      commune: order.customer.commune,
-      notes: order.customer.notes || null,
-      delivery_mode: order.customer.deliveryMode,
-      status: order.status,
-      subtotal_xof: order.subtotalXOF,
-      delivery_cost_xof: order.deliveryCostXOF,
-      total_xof: order.totalXOF,
-      payment_method: order.paymentMethod,
-      payment_reference: order.paymentReference || null,
-      status_history: order.statusHistory,
-      created_at: order.createdAt,
-      items: itemsPayload
-    };
-
-    // 1. Tenter l'envoi vers l'API serveur publique (qui utilise la clé d'administration Supabase)
-    try {
-      const res = await fetch('/api/public/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(orderPayload)
-      });
-      if (res.ok) {
-        return { success: true };
-      }
-    } catch {
-      // Ignorer l'erreur réseau et tenter le fallback direct
-    }
-
-    // 2. Fallback direct client Supabase
-    const { error: orderError } = await supabase.from('orders').upsert({
-      id: order.id,
-      order_number: order.orderNumber,
-      user_id: currentUserId,
-      customer_name: order.customer.fullName,
-      customer_email: order.customer.email,
-      customer_phone: order.customer.phone,
-      customer_commune: order.customer.commune,
-      customer_delivery_address: order.customer.deliveryAddress,
-      customer_notes: order.customer.notes || null,
-      delivery_address: order.customer.deliveryAddress,
-      shipping_address: order.customer.deliveryAddress,
-      commune: order.customer.commune,
-      notes: order.customer.notes || null,
-      delivery_mode: order.customer.deliveryMode,
-      status: order.status,
-      subtotal_xof: order.subtotalXOF,
-      delivery_cost_xof: order.deliveryCostXOF,
-      total_xof: order.totalXOF,
-      payment_method: order.paymentMethod,
-      payment_reference: order.paymentReference || null,
-      status_history: order.statusHistory,
-      order_items: itemsPayload,
-      created_at: order.createdAt
+    const response = await fetch('/api/public/orders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({
+        customer_name: order.customer.fullName,
+        customer_email: order.customer.email,
+        customer_phone: order.customer.phone,
+        customer_commune: order.customer.commune,
+        customer_delivery_address: order.customer.deliveryAddress,
+        customer_notes: order.customer.notes || null,
+        delivery_mode: order.customer.deliveryMode,
+        payment_method: order.paymentMethod || 'transmission_whatsapp',
+        items: order.items.map((item) => ({
+          product_id: item.product.id,
+          quantity: item.quantity
+        }))
+      })
     });
 
-    if (orderError) {
-      console.warn('Erreur fallback direct Supabase orders:', orderError.message);
-      return { success: false, error: orderError };
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.order) {
+      return { success: false as const, error: new Error(data?.error || 'La commande ne peut pas être enregistrée pour le moment.') };
     }
 
-    const itemsForDirect = order.items.map((item) => ({
-      order_id: order.id,
-      product_id: item.product.id,
-      product_sku: item.product.sku,
-      product_name: item.product.name,
-      product_reference: item.product.reference || item.product.sku,
-      quantity: item.quantity,
-      price_xof: item.product.priceXOF,
-      image_url: item.product.primaryImage
-    }));
-
-    if (itemsForDirect.length > 0) {
-      await supabase.from('order_items').insert(itemsForDirect);
-    }
-
-    return { success: true };
-  } catch (e: any) {
-    console.warn('Synchronisation commande Supabase ignorée:', e?.message || e);
-    return { success: false, error: e };
+    return { success: true as const, order: data.order };
+  } catch (error) {
+    return {
+      success: false as const,
+      error: error instanceof Error ? error : new Error('La commande ne peut pas être enregistrée pour le moment.')
+    };
   }
 }
 

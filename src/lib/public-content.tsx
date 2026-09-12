@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Product } from '../types';
-import { getPublishedProducts } from '../data/products';
 import { BLOG_ARTICLES } from '../data/blog';
 
 const FALLBACK_BLOGS: PublicBlogPost[] = BLOG_ARTICLES.map((article, idx) => ({
@@ -125,7 +124,9 @@ export const toProduct = (row: Record<string, any>): Product => {
   const legacyGallery = jsonArray(row.gallery_images).map((asset) => ({ public_url: asset.url, alt_text: asset.alt, id: asset.url }));
   const gallery = managedGallery.length ? managedGallery : legacyGallery;
   const primary = gallery.find((asset: any) => String(asset.id) === String(row.primary_media_id)) || gallery[0];
-  const price = Number(row.sale_price_xof ?? row.regular_price_xof ?? row.price_xof ?? 0);
+  const regularPrice = Number(row.regular_price_xof ?? row.price_xof ?? 0);
+  const salePrice = row.sale_price_xof === null || row.sale_price_xof === undefined ? null : Number(row.sale_price_xof);
+  const price = salePrice !== null && salePrice > 0 && salePrice < regularPrice ? salePrice : regularPrice;
   return {
     id: String(row.id),
     sku: String(row.sku || row.reference || row.id),
@@ -138,7 +139,7 @@ export const toProduct = (row: Record<string, any>): Product => {
     stockStatus: row.stock_status || (Number(row.stock_quantity || 0) > 0 ? 'En stock' : 'Indisponible'),
     stockCount: Number(row.stock_quantity ?? row.stock_count ?? 0),
     status: 'published',
-    primaryImage: primary?.public_url || row.primary_image || '',
+    primaryImage: primary?.public_url || '',
     additionalImages: gallery.map((asset: any, index: number) => ({
       url: asset.public_url,
       alt: asset.alt_text || row.name || '',
@@ -174,21 +175,23 @@ export const PublicContentProvider: React.FC<{ children: React.ReactNode }> = ({
     setLoading(true);
     try {
       const [productRows, posts, settings, faqRows, reviewRows] = await Promise.all([
-        publicRequest<Record<string, any>[]>('/products').catch(() => []),
+        publicRequest<Record<string, any>[]>('/products'),
         publicRequest<PublicBlogPost[]>('/blogs').catch(() => []),
         publicRequest<SiteSettings>('/site-settings').catch(() => null),
         publicRequest<PublicFaq[]>('/faqs').catch(() => []),
         publicRequest<PublicReview[]>('/reviews').catch(() => [])
       ]);
-      const mappedProducts = (productRows && productRows.length > 0) ? productRows.map(toProduct) : getPublishedProducts();
-      setProducts(mappedProducts);
+      // An empty Supabase catalogue is intentionally empty on the storefront.
+      // This prevents retired demo items from reappearing after an admin deletes
+      // or unpublishes the final product in a category.
+      setProducts((productRows || []).map(toProduct));
       setBlogs((posts && posts.length > 0) ? posts : FALLBACK_BLOGS);
       setSiteSettings(settings || FALLBACK_SITE_SETTINGS);
       setFaqs(faqRows || []);
       setReviews(reviewRows || []);
       setError(null);
     } catch {
-      setProducts(getPublishedProducts());
+      setProducts([]);
       setBlogs(FALLBACK_BLOGS);
       setSiteSettings(FALLBACK_SITE_SETTINGS);
       setError(null);
