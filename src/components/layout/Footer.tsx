@@ -1,27 +1,78 @@
 import React from 'react';
-import { Phone, Mail, MapPin, ShieldCheck, Clock, Award } from 'lucide-react';
+import { Phone, Mail, MapPin, ShieldCheck, Clock, Award, Facebook, Instagram, Youtube } from 'lucide-react';
 import { usePublicContent } from '../../lib/public-content';
 
 interface FooterProps {
   navigate: (route: string) => void;
 }
 
+const TikTokIcon: React.FC<{ className?: string }> = ({ className = 'w-5 h-5' }) => (
+  <svg
+    className={className}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.75"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5" />
+  </svg>
+);
+
+const XIcon: React.FC<{ className?: string }> = ({ className = 'w-5 h-5' }) => (
+  <svg
+    className={className}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.75"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M4 4l11.733 16h4.267l-11.733 -16z" />
+    <path d="M4 20l6.768 -6.768m2.46 -2.46l6.772 -6.772" />
+  </svg>
+);
+
 export const Footer: React.FC<FooterProps> = ({ navigate }) => {
   const { siteSettings, products } = usePublicContent();
   const watches = products.filter((product) => product.category === 'montres').slice(0, 4);
   const footerNotices = Array.isArray(siteSettings?.footer_notices) ? siteSettings.footer_notices.slice(0, 3) : [];
-  const socialLinks = Object.entries(siteSettings?.social_links || {}).filter(([, url]) => Boolean(url));
   const noticeIcons = [ShieldCheck, Clock, Award];
+
+  // Order required: Facebook, Instagram, TikTok, YouTube, X
+  const rawSocials = (siteSettings?.social_links || {}) as Record<string, string>;
+  const socialConfig = [
+    { key: 'facebook', label: 'HERITAGE sur Facebook', icon: Facebook, url: rawSocials.facebook },
+    { key: 'instagram', label: 'HERITAGE sur Instagram', icon: Instagram, url: rawSocials.instagram },
+    { key: 'tiktok', label: 'HERITAGE sur TikTok', icon: TikTokIcon, url: rawSocials.tiktok },
+    { key: 'youtube', label: 'HERITAGE sur YouTube', icon: Youtube, url: rawSocials.youtube },
+    { key: 'x', label: 'HERITAGE sur X', icon: XIcon, url: rawSocials.x || rawSocials.twitter }
+  ].filter((item) => Boolean(item.url && typeof item.url === 'string' && item.url.trim().length > 0));
+
   return (
     <footer className="bg-[#002141] text-[#FAF9F7] pt-16 pb-12 border-t border-[#D6BB8F]/20">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Value badges strip */}
-        {footerNotices.length > 0 && <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pb-12 mb-12 border-b border-[#FAF9F7]/10">
-          {footerNotices.map((notice, index) => {
-            const Icon = noticeIcons[index] || ShieldCheck;
-            return <div key={`${notice.title}-${index}`} className="flex items-start gap-4"><Icon className="w-6 h-6 text-[#D6BB8F] flex-shrink-0 mt-0.5" /><div><h4 className="text-xs font-bold uppercase tracking-widest text-[#D6BB8F] mb-1">{notice.title}</h4><p className="text-xs text-[#FAF9F7]/80 leading-relaxed">{notice.body}</p></div></div>;
-          })}
-        </div>}
+        {footerNotices.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pb-12 mb-12 border-b border-[#FAF9F7]/10">
+            {footerNotices.map((notice, index) => {
+              const Icon = noticeIcons[index] || ShieldCheck;
+              return (
+                <div key={`${notice.title}-${index}`} className="flex items-start gap-4">
+                  <Icon className="w-6 h-6 text-[#D6BB8F] flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-widest text-[#D6BB8F] mb-1">
+                      {notice.title}
+                    </h4>
+                    <p className="text-xs text-[#FAF9F7]/80 leading-relaxed">{notice.body}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Main 4-column footer layout */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10 mb-14">
@@ -50,7 +101,10 @@ export const Footer: React.FC<FooterProps> = ({ navigate }) => {
               </div>
               <div className="flex items-center gap-2">
                 <Phone className="w-3.5 h-3.5 text-[#D6BB8F]" />
-                <a href={siteSettings?.phone ? `tel:${siteSettings.phone.replace(/\s/g, '')}` : undefined} className="hover:text-[#D6BB8F] transition-colors">
+                <a
+                  href={siteSettings?.phone ? `tel:${siteSettings.phone.replace(/\s/g, '')}` : undefined}
+                  className="hover:text-[#D6BB8F] transition-colors"
+                >
                   {siteSettings?.phone || ''}
                 </a>
               </div>
@@ -64,7 +118,27 @@ export const Footer: React.FC<FooterProps> = ({ navigate }) => {
                 </a>
               </div>
             </div>
-            {socialLinks.length > 0 && <div className="flex flex-wrap gap-x-3 gap-y-2 pt-2 text-[11px] font-semibold uppercase tracking-wider text-[#D6BB8F]">{socialLinks.map(([network, url]) => <a key={network} href={url} target="_blank" rel="noopener noreferrer" className="hover:text-[#FAF9F7] transition-colors">{network}</a>)}</div>}
+
+            {/* Social Media Linear Icons */}
+            {socialConfig.length > 0 && (
+              <div className="pt-4 flex items-center gap-4">
+                {socialConfig.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <a
+                      key={item.key}
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={item.label}
+                      className="text-[#D6BB8F] hover:text-[#FAF9F7] transition-colors p-1"
+                    >
+                      <Icon className="w-5 h-5" />
+                    </a>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Nav Column 1: Collection */}
@@ -82,14 +156,24 @@ export const Footer: React.FC<FooterProps> = ({ navigate }) => {
                   Toutes les montres suisses
                 </button>
               </li>
-              {watches.map((watch) => <li key={watch.id}><button type="button" onClick={() => navigate(`/montres/${watch.slug}`)} className="hover:text-[#FAF9F7] transition-colors cursor-pointer text-left">{watch.name}</button></li>)}
+              {watches.map((watch) => (
+                <li key={watch.id}>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/montres/${watch.slug}`)}
+                    className="hover:text-[#FAF9F7] transition-colors cursor-pointer text-left"
+                  >
+                    {watch.name}
+                  </button>
+                </li>
+              ))}
             </ul>
           </div>
 
           {/* Nav Column 2: Conseil & Guide */}
           <div>
             <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-[#D6BB8F] mb-4">
-              Conseil & Exigence
+              Conseil &amp; Exigence
             </h3>
             <ul className="space-y-2.5 text-xs text-[#FAF9F7]/80">
               <li>
@@ -116,7 +200,7 @@ export const Footer: React.FC<FooterProps> = ({ navigate }) => {
                   onClick={() => navigate('/authenticite-provenance')}
                   className="hover:text-[#FAF9F7] transition-colors cursor-pointer text-left"
                 >
-                  Authenticité & Traçabilité
+                  Authenticité &amp; Traçabilité
                 </button>
               </li>
               <li>
@@ -125,7 +209,7 @@ export const Footer: React.FC<FooterProps> = ({ navigate }) => {
                   onClick={() => navigate('/livraison-retours')}
                   className="hover:text-[#FAF9F7] transition-colors cursor-pointer text-left"
                 >
-                  Livraison sécurisée & Retours
+                  Livraison sécurisée &amp; Retours
                 </button>
               </li>
               <li>
@@ -134,7 +218,7 @@ export const Footer: React.FC<FooterProps> = ({ navigate }) => {
                   onClick={() => navigate('/garantie-service')}
                   className="hover:text-[#FAF9F7] transition-colors cursor-pointer text-left"
                 >
-                  Garantie 2 ans & Entretien
+                  Garantie 2 ans &amp; Entretien
                 </button>
               </li>
             </ul>
@@ -143,7 +227,7 @@ export const Footer: React.FC<FooterProps> = ({ navigate }) => {
           {/* Nav Column 3: Contact & Légal */}
           <div>
             <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-[#D6BB8F] mb-4">
-              Informations & Suivi
+              Informations &amp; Suivi
             </h3>
             <ul className="space-y-2.5 text-xs text-[#FAF9F7]/80">
               <li>

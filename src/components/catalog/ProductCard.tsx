@@ -2,7 +2,8 @@ import React from 'react';
 import { Product } from '../../types';
 import { formatXOF } from '../../data/products';
 import { useStore } from '../../context/StoreContext';
-import { ArrowRight, ShoppingBag, Heart } from 'lucide-react';
+import { usePublicContent } from '../../lib/public-content';
+import { ArrowRight, ShoppingBag, Heart, Star } from 'lucide-react';
 
 interface ProductCardProps {
   product: Product;
@@ -11,7 +12,12 @@ interface ProductCardProps {
 
 export const ProductCard: React.FC<ProductCardProps> = ({ product, navigate }) => {
   const { addToCart, isInWishlist, toggleWishlist } = useStore();
+  const { reviews } = usePublicContent();
   const isFavorite = isInWishlist(product.id);
+
+  const productReviews = (reviews || []).filter((r) => String(r.product_id) === String(product.id));
+  const reviewCount = productReviews.length;
+  const averageRating = reviewCount > 0 ? (productReviews.reduce((sum, r) => sum + (r.rating || 5), 0) / reviewCount).toFixed(1) : null;
 
   const handleCardClick = () => {
     navigate(`/montres/${product.slug}`);
@@ -95,9 +101,20 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, navigate }) =
           </div>
 
           {/* Model Name */}
-          <h3 className="font-playfair text-base sm:text-lg font-bold text-[#002141] group-hover:text-[#AC854B] transition-colors line-clamp-1 mb-2">
+          <h3 className="font-playfair text-base sm:text-lg font-bold text-[#002141] group-hover:text-[#AC854B] transition-colors line-clamp-1 mb-1.5">
             {product.name}
           </h3>
+
+          {/* Average rating badge (if reviews exist) */}
+          {averageRating && (
+            <div className="flex items-center gap-1.5 mb-2.5 text-xs">
+              <div className="flex items-center text-[#AC854B]">
+                <Star className="w-3.5 h-3.5 fill-[#AC854B]" />
+              </div>
+              <span className="font-semibold text-[#002141] text-[11px]">{averageRating}</span>
+              <span className="text-[10px] text-[#3A3A3A]/60">({reviewCount} {reviewCount > 1 ? 'avis' : 'avis'})</span>
+            </div>
+          )}
 
           {/* Key Attributes summary */}
           <p className="text-xs text-[#3A3A3A]/80 line-clamp-2 leading-relaxed mb-4">

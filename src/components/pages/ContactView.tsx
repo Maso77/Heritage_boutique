@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { MessageCircle, Phone, Mail, MapPin, Clock, Send, CheckCircle2 } from 'lucide-react';
 import { usePublicContent } from '../../lib/public-content';
+import { PublicFeedbackSections } from '../common/PublicFeedbackSections';
 
 interface ContactViewProps {
   navigate: (route: string) => void;
@@ -263,20 +264,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
             )}
           </div>
         </div>
-        {(featuredReviews.length > 0 || contactFaqs.length > 0) && <div className="mt-16 grid gap-8 lg:grid-cols-2">
-          {featuredReviews.length > 0 && <section className="premium-section-card bg-white border border-[#002141]/10 p-6 sm:p-8">
-            <h2 className="font-playfair text-xl font-bold text-[#002141]">Avis de clients</h2>
-            <div className="mt-5 space-y-5">
-              {featuredReviews.map((review) => <article key={review.id} className="border-t border-[#002141]/10 pt-4 text-sm text-[#3A3A3A]"><p className="font-semibold text-[#002141]">{review.author_name} · {review.rating}/5</p><p className="mt-2 leading-relaxed">{review.body}</p>{review.merchant_response && <p className="mt-2 border-l-2 border-[#AC854B] pl-3 text-xs">HERITAGE : {review.merchant_response}</p>}</article>)}
-            </div>
-          </section>}
-          {contactFaqs.length > 0 && <section className="premium-section-card bg-white border border-[#002141]/10 p-6 sm:p-8">
-            <h2 className="font-playfair text-xl font-bold text-[#002141]">Questions fréquentes</h2>
-            <div className="mt-5 divide-y divide-[#002141]/10">
-              {contactFaqs.map((faq) => <details key={faq.id} className="py-4"><summary className="cursor-pointer font-semibold text-[#002141]">{faq.question}</summary><div className="mt-3 text-sm leading-relaxed text-[#3A3A3A]" dangerouslySetInnerHTML={{ __html: faq.answer_html }} /></details>)}
-            </div>
-          </section>}
-        </div>}
+        <PublicFeedbackSections placement="contact" />
       </div>
     </div>
   );
