@@ -112,8 +112,10 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ navigate }) => {
     const updateCopyBands = (progress: number) => {
       const mediaLayer = mediaLayerRef.current;
       if (mediaLayer) {
-        const mobileScale = mobileMedia.matches ? 1.6 : 1.04;
-        const scale = mobileScale + progress * 0.035;
+        // The supplied portrait clip already fills a phone viewport. Keep its
+        // original framing rather than applying the former, aggressive crop.
+        const mobileScale = mobileMedia.matches ? 1.02 : 1.04;
+        const scale = mobileScale + progress * 0.02;
         const translateY = (mobileMedia.matches ? -4.5 : -2.5) * progress;
         const nextTransform = `translate3d(0, ${translateY.toFixed(2)}%, 0) scale(${scale.toFixed(3)})`;
         if (mediaLayer.style.transform !== nextTransform) mediaLayer.style.transform = nextTransform;
@@ -221,8 +223,8 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ navigate }) => {
       const useMobileVideo = mobileMedia.matches;
       const video = useMobileVideo ? mobileVideo : desktopVideo;
       const source = useMobileVideo
-        ? '/assets/hero-mobile-scroll.mp4'
-        : '/assets/hero-desktop-scroll.mp4';
+        ? '/assets/hero-mobile-pic2-scrub.mp4'
+        : '/assets/hero-pc-pic2-scrub.mp4';
 
       activeVideo = video;
       const controller = new AbortController();
@@ -313,11 +315,11 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ navigate }) => {
         <div className="absolute inset-0 h-full w-full" aria-hidden="true">
           <div ref={mediaLayerRef} className="hero-scroll-media absolute inset-0 h-full w-full">
             <picture className="absolute inset-0 block h-full w-full">
-              <source media="(max-width: 767px)" srcSet="/assets/hero-mobile-poster.jpg" />
+              <source media="(max-width: 767px)" srcSet="/assets/hero-mobile-pic2-poster.jpg" />
               <img
-                src="/assets/hero-desktop-poster.jpg"
+                src="/assets/hero-pc-pic2-poster.jpg"
                 alt=""
-                className="absolute inset-0 h-full w-full object-cover object-right md:object-[75%_center]"
+                className="absolute inset-0 h-full w-full object-cover object-center md:object-[75%_center]"
                 loading="eager"
                 fetchPriority="high"
               />

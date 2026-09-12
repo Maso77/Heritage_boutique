@@ -48,6 +48,7 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
   }, [SIGNATURE_ITEMS]);
   const [activeIndex, setActiveIndex] = useState(INITIAL_INDEX);
   const [withAnimation, setWithAnimation] = useState(true);
+  const [isDragging, setIsDragging] = useState(false);
   const trackRef = useRef<HTMLDivElement>(null);
   const [trackWidth, setTrackWidth] = useState<number>(() => {
     if (typeof window !== 'undefined') {
@@ -78,6 +79,7 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
   // This allows truly infinite looping in both directions without any visual jump
   const handleAnimationComplete = () => {
     if (!withAnimation) return;
+    setIsDragging(false);
     const currentMod = ((activeIndex % BASE_COUNT) + BASE_COUNT) % BASE_COUNT;
     const normalizedIndex = CENTER_CYCLE * BASE_COUNT + currentMod;
     if (activeIndex !== normalizedIndex) {
@@ -123,6 +125,22 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
 
   const handleNext = () => {
     setActiveIndex((prev) => prev + 1);
+  };
+
+  const handleDragEnd = (offsetX: number, velocityX: number) => {
+    const dragThreshold = Math.max(24, step * 0.12);
+    const velocityThreshold = 220;
+
+    if (Math.abs(offsetX) < dragThreshold && Math.abs(velocityX) < velocityThreshold) {
+      return;
+    }
+
+    // A deliberate long pull can advance several cards, while a short flick
+    // still moves exactly one card. The cap keeps the infinite-track reset
+    // comfortably outside the visible stage.
+    const gestureDistance = Math.max(Math.abs(offsetX), Math.abs(velocityX) * 0.16);
+    const stepsToMove = Math.min(3, Math.max(1, Math.round(gestureDistance / step)));
+    setActiveIndex((prev) => prev + (offsetX < 0 || velocityX < 0 ? stepsToMove : -stepsToMove));
   };
 
   // Shortest path cyclic navigation for dot indicators
@@ -191,14 +209,10 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
             <motion.div
               drag="x"
               dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={0.18}
+              dragElastic={0.12}
+              onDragStart={() => setIsDragging(true)}
               onDragEnd={(_, info) => {
-                const threshold = 20;
-                if (info.offset.x < -threshold || info.velocity.x < -120) {
-                  handleNext();
-                } else if (info.offset.x > threshold || info.velocity.x > 120) {
-                  handlePrev();
-                }
+                handleDragEnd(info.offset.x, info.velocity.x);
               }}
               animate={{ x: targetX }}
               onAnimationComplete={handleAnimationComplete}
@@ -219,20 +233,15 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
                 const distance = Math.abs(index - activeIndex);
                 const isCenter = index === activeIndex;
 
-                // Scale and opacity calculation matching reference screenshot 215215.png
-                let scaleVal = 0.60;
-                let opacityVal = 0;
-
-                if (distance === 0) {
-                  scaleVal = isDesktop ? 1.12 : isTablet ? 1.08 : 1.05;
-                  opacityVal = 1.0;
-                } else if (distance === 1) {
-                  scaleVal = isDesktop ? 0.92 : isTablet ? 0.90 : 0.88;
-                  opacityVal = 1.0;
-                } else {
-                  scaleVal = 0.60;
-                  opacityVal = 0;
-                }
+                // While dragging, the full repeated track is available behind the
+                // three-card stage, so a long pull never exposes an empty gap.
+                // Once it settles, the composition returns to its intended focus.
+                const scaleVal = isCenter
+                  ? isDesktop ? 1.12 : isTablet ? 1.08 : 1.05
+                  : distance === 1 || isDragging
+                    ? isDesktop ? 0.92 : isTablet ? 0.90 : 0.88
+                    : 0.60;
+                const opacityVal = distance <= 1 || isDragging ? 1 : 0;
 
                 return (
                   <motion.div
@@ -250,7 +259,7 @@ export const SignaturePiecesSection: React.FC<SignaturePiecesSectionProps> = ({ 
                     transition={
                       withAnimation
                         ? {
-                            duration: 0.4,
+                            duration: isDragging ? 0.12 : 0.4,
                             ease: [0.22, 1, 0.36, 1]
                           }
                         : { duration: 0 }

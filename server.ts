@@ -31,6 +31,18 @@ const app = express();
 app.use(express.json({ limit: '12mb' }));
 
 const adminRegistrationAttempts = new Map<string, { count: number; resetAt: number }>();
+const contactIpAttempts = new Map<string, number[]>();
+const contactEmailAttempts = new Map<string, number[]>();
+const CONTACT_RATE_WINDOW_MS = 15 * 60 * 1000;
+const CONTACT_MAX_IP_ATTEMPTS = 5;
+const CONTACT_MAX_EMAIL_ATTEMPTS = 3;
+const CONTACT_SUBJECTS = new Set([
+  'Renseignement sur une montre',
+  "Disponibilité d'un modèle",
+  'Prise de rendez-vous à Yopougon',
+  'Suivi de commande',
+  'Autre demande'
+]);
 
 function limitAdminRegistration(req: Request, res: Response, next: NextFunction) {
   const forwarded = req.header('x-forwarded-for')?.split(',')[0]?.trim();
@@ -48,6 +60,30 @@ function limitAdminRegistration(req: Request, res: Response, next: NextFunction)
   attempt.count += 1;
   adminRegistrationAttempts.set(clientIp, attempt);
   next();
+}
+
+function getClientIp(req: Request) {
+  const forwarded = req.header('x-forwarded-for')?.split(',')[0]?.trim();
+  return forwarded || req.ip || 'unknown';
+}
+
+function countRecentAttempts(attempts: Map<string, number[]>, key: string, now: number) {
+  const recent = (attempts.get(key) || []).filter((timestamp) => timestamp > now - CONTACT_RATE_WINDOW_MS);
+  if (recent.length) attempts.set(key, recent);
+  else attempts.delete(key);
+  return recent.length;
+}
+
+function registerContactAttempt(attempts: Map<string, number[]>, key: string, now: number) {
+  const recent = (attempts.get(key) || []).filter((timestamp) => timestamp > now - CONTACT_RATE_WINDOW_MS);
+  recent.push(now);
+  attempts.set(key, recent);
+}
+
+function hashContactIp(ip: string) {
+  const salt = process.env.CONTACT_SPAM_HASH_SALT;
+  if (!salt || !ip || ip === 'unknown') return null;
+  return crypto.createHmac('sha256', salt).update(ip).digest('hex');
 }
 
 let supabaseAdmin: SupabaseClient | null = null;
@@ -717,17 +753,39 @@ app.get('/api/public/tracking', async (_req: Request, res: Response) => {
   }
 });
 
-app.post('/api/public/contact-messages', limitAdminRegistration, async (req: Request, res: Response) => {
+app.post('/api/public/contact-messages', async (req: Request, res: Response) => {
+  // A visually hidden field catches unsophisticated bots without adding any
+  // friction to the visitor-facing form. Return a neutral result to avoid
+  // giving bots a useful signal.
+  if (text(req.body?.website, 200)) return res.status(201).json({ success: true });
+
   const payload = {
     full_name: text(req.body?.full_name, 160),
     email: text(req.body?.email, 180).toLowerCase(),
     phone: text(req.body?.phone, 80),
     subject: text(req.body?.subject, 180),
-    message: text(req.body?.message, 5000)
+    message: text(req.body?.message, 5000),
+    source_ip_hash: hashContactIp(getClientIp(req))
   };
-  if (!payload.full_name || !/^\S+@\S+\.\S+$/.test(payload.email) || !payload.phone || !payload.message) {
+  const phoneDigits = payload.phone.replace(/\D/g, '');
+  if (payload.full_name.length < 2 || !/^\S+@\S+\.\S+$/.test(payload.email) || phoneDigits.length < 8 || payload.message.length < 2) {
     return sendError(res, 400, 'Veuillez renseigner votre nom, votre e-mail, votre téléphone et votre message.');
   }
+  if (!CONTACT_SUBJECTS.has(payload.subject)) {
+    return sendError(res, 400, 'Veuillez sélectionner l’objet de votre demande.');
+  }
+
+  const now = Date.now();
+  const clientIp = getClientIp(req);
+  if (
+    countRecentAttempts(contactIpAttempts, clientIp, now) >= CONTACT_MAX_IP_ATTEMPTS ||
+    countRecentAttempts(contactEmailAttempts, payload.email, now) >= CONTACT_MAX_EMAIL_ATTEMPTS
+  ) {
+    return sendError(res, 429, 'Trop de messages ont été envoyés récemment. Veuillez réessayer plus tard.');
+  }
+  registerContactAttempt(contactIpAttempts, clientIp, now);
+  registerContactAttempt(contactEmailAttempts, payload.email, now);
+
   try {
     const { error } = await getSupabaseAdmin().from('contact_messages').insert(payload);
     if (error) throw error;
@@ -943,7 +1001,7 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
       const contactsResult = await admin
         .from('contact_messages')
         .select('id', { count: 'exact', head: true })
-        .eq('status', 'unread');
+        .eq('status', 'new');
       unreadMessages = contactsResult.count || 0;
     } catch {
       // Table contact_messages absente
@@ -1730,7 +1788,10 @@ app.get('/api/admin/users/export.csv', async (_req: AdminRequest, res: Response)
 
 app.get('/api/admin/contact-messages', async (_req: AdminRequest, res: Response) => {
   try {
-    const { data, error } = await getSupabaseAdmin().from('contact_messages').select('*').order('created_at', { ascending: false });
+    const { data, error } = await getSupabaseAdmin()
+      .from('contact_messages')
+      .select('id, full_name, email, subject, message, status, created_at, read_at, processed_at')
+      .order('created_at', { ascending: false });
     if (error) throw error;
     res.json(data || []);
   } catch {
@@ -1738,20 +1799,75 @@ app.get('/api/admin/contact-messages', async (_req: AdminRequest, res: Response)
   }
 });
 
+app.get('/api/admin/contact-messages/:id', async (req: AdminRequest, res: Response) => {
+  try {
+    const admin = getSupabaseAdmin();
+    const { data, error } = await admin
+      .from('contact_messages')
+      .select('id, full_name, email, phone, subject, message, status, created_at, read_at, read_by, processed_at, processed_by')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return sendError(res, 404, 'Ce message est introuvable.');
+
+    if (data.status === 'new') {
+      const openedAt = new Date().toISOString();
+      const { data: updated, error: updateError } = await admin
+        .from('contact_messages')
+        .update({ status: 'read', read_at: openedAt, read_by: req.admin!.id })
+        .eq('id', data.id)
+        .select('id, full_name, email, phone, subject, message, status, created_at, read_at, read_by, processed_at, processed_by')
+        .single();
+      if (updateError) throw updateError;
+      await writeAudit(req.admin!.id, 'read', 'contact_message', data.id);
+      return res.json(updated);
+    }
+
+    res.json(data);
+  } catch {
+    sendError(res, 503, 'Le message de contact est indisponible.');
+  }
+});
+
 app.patch('/api/admin/contact-messages/:id', async (req: AdminRequest, res: Response) => {
-  const status = ['unread', 'read', 'archived'].includes(text(req.body?.status, 20)) ? text(req.body?.status, 20) : '';
+  const status = ['new', 'read', 'processed'].includes(text(req.body?.status, 20)) ? text(req.body?.status, 20) : '';
   if (!status) return sendError(res, 400, 'Statut de message invalide.');
   try {
-    const { data, error } = await getSupabaseAdmin().from('contact_messages').update({
-      status,
-      read_at: status === 'read' ? new Date().toISOString() : null,
-      read_by: status === 'read' ? req.admin!.id : null
-    }).eq('id', req.params.id).select().single();
+    const now = new Date().toISOString();
+    const update: Record<string, unknown> = { status };
+    if (status === 'new') {
+      update.read_at = null;
+      update.read_by = null;
+      update.processed_at = null;
+      update.processed_by = null;
+    }
+    if (status === 'read') {
+      update.read_at = now;
+      update.read_by = req.admin!.id;
+    }
+    if (status === 'processed') {
+      update.read_at = now;
+      update.read_by = req.admin!.id;
+      update.processed_at = now;
+      update.processed_by = req.admin!.id;
+    }
+    const { data, error } = await getSupabaseAdmin().from('contact_messages').update(update).eq('id', req.params.id).select().single();
     if (error) throw error;
     await writeAudit(req.admin!.id, 'updated', 'contact_message', req.params.id, { status });
     res.json(data);
   } catch {
     sendError(res, 400, 'La mise à jour du message a échoué.');
+  }
+});
+
+app.delete('/api/admin/contact-messages/:id', async (req: AdminRequest, res: Response) => {
+  try {
+    const { error } = await getSupabaseAdmin().from('contact_messages').delete().eq('id', req.params.id);
+    if (error) throw error;
+    await writeAudit(req.admin!.id, 'deleted', 'contact_message', req.params.id);
+    res.status(204).end();
+  } catch {
+    sendError(res, 400, 'La suppression du message a échoué.');
   }
 });
 

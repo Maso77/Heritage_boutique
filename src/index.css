@@ -120,12 +120,11 @@ footer ul > li > button {
   }
 
   .hero-scroll-media {
-    transform: scale(1.6);
-    transform-origin: center 30%;
+    transform: scale(1.02);
+    transform-origin: center;
   }
 
-  /* The mobile scene is intentionally close-cropped so the watch, not an
-     empty part of the original vertical frame, fills the whole hero. */
+  /* The supplied portrait scene already fills the frame naturally. */
   .hero-copy-stage {
     padding-right: 0;
     padding-left: 0;

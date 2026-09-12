@@ -18,7 +18,9 @@ import {
   Eye,
   FileCheck,
   FileText,
+  FolderOpen,
   GalleryVerticalEnd,
+  HardDrive,
   HelpCircle,
   Image as ImageIcon,
   KeyRound,
@@ -48,6 +50,7 @@ import {
   Trash2,
   Truck,
   Upload,
+  UploadCloud,
   User,
   UserCheck,
   UsersRound,
@@ -79,6 +82,17 @@ type AdminTab =
   | 'pixels';
 
 type AnyRecord = Record<string, any>;
+
+const CONTACT_MESSAGE_STATUS_LABELS: Record<string, string> = {
+  new: 'Nouveau',
+  read: 'Lu',
+  processed: 'Traité'
+};
+
+const contactMessageExcerpt = (message: unknown, maxLength = 160) => {
+  const normalized = String(message || '').replace(/\s+/g, ' ').trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength).trimEnd()}…` : normalized;
+};
 
 const NAVIGATION: Array<{ id: AdminTab; label: string; icon: React.ElementType; section?: string }> = [
   { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard, section: 'Pilotage' },
@@ -810,6 +824,11 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [users, setUsers] = useState<AnyRecord[]>([]);
   const [media, setMedia] = useState<AnyRecord[]>([]);
   const [contactMessages, setContactMessages] = useState<AnyRecord[]>([]);
+  const [contactMessageSearch, setContactMessageSearch] = useState('');
+  const [contactMessageStatusFilter, setContactMessageStatusFilter] = useState('');
+  const [contactMessageSort, setContactMessageSort] = useState<'date_desc' | 'date_asc'>('date_desc');
+  const [selectedContactMessage, setSelectedContactMessage] = useState<AnyRecord | null>(null);
+  const [contactMessageDetailLoading, setContactMessageDetailLoading] = useState(false);
   const [resources, setResources] = useState<Record<string, AnyRecord[]>>({});
   const [siteSettings, setSiteSettings] = useState<AnyRecord | null>(null);
   const [editingProduct, setEditingProduct] = useState<AnyRecord | null>(null);
@@ -4929,10 +4948,139 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     </>;
   };
 
-  const renderMessages = () => <>
-    <PanelHeader eyebrow="Relation client" title="Messages reçus" description="Consultez les messages envoyés depuis le formulaire de contact du site." />
-    {contactMessages.length === 0 ? <EmptyState title="Aucun message" body="Les messages envoyés par les visiteurs de la boutique apparaîtront ici." /> : <div className="space-y-4">{contactMessages.map((msg) => <article key={msg.id} className="border border-[#002141]/15 bg-white p-5"><div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div><p className="font-semibold text-[#002141]">{msg.full_name || 'Anonyme'} <span className="text-xs font-normal text-[#3A3A3A]">({msg.email}{msg.phone ? ` · ${msg.phone}` : ''})</span></p><p className="mt-1 text-xs text-[#3A3A3A]">{msg.created_at ? new Date(msg.created_at).toLocaleString('fr-FR') : '—'} · Statut : <span className="admin-pill">{msg.status === 'unread' ? 'Non lu' : msg.status === 'read' ? 'Lu' : 'Archivé'}</span></p></div><div className="flex gap-2"><button type="button" onClick={async () => { try { await adminRequest(`/contact-messages/${msg.id}`, { method: 'PATCH', body: { status: msg.status === 'unread' ? 'read' : 'unread' } }); await loadTab('messages'); notify('Statut mis à jour.'); } catch (error) { notify(error instanceof Error ? error.message : 'Action impossible.'); } }} className="admin-secondary-button">{msg.status === 'unread' ? 'Marquer comme lu' : 'Marquer non lu'}</button><button type="button" onClick={async () => { try { await adminRequest(`/contact-messages/${msg.id}`, { method: 'PATCH', body: { status: 'archived' } }); await loadTab('messages'); notify('Message archivé.'); } catch (error) { notify(error instanceof Error ? error.message : 'Action impossible.'); } }} className="admin-icon-button text-red-800" aria-label="Archiver"><Trash2 className="h-4 w-4" /></button></div></div>{msg.subject && <p className="mt-3 text-sm font-semibold text-[#002141]">Sujet : {msg.subject}</p>}<div className="mt-3 border-t border-[#002141]/10 pt-3 text-sm leading-relaxed text-[#3A3A3A] whitespace-pre-wrap">{msg.message}</div></article>)}</div>}
-  </>;
+
+  const renderMessages = () => {
+    const normalizedQuery = contactMessageSearch.trim().toLocaleLowerCase('fr-FR');
+    const visibleMessages = [...contactMessages]
+      .filter((message) => {
+        const matchesStatus = !contactMessageStatusFilter || message.status === contactMessageStatusFilter;
+        const matchesQuery = !normalizedQuery || [message.full_name, message.email, message.subject]
+          .some((value) => String(value || '').toLocaleLowerCase('fr-FR').includes(normalizedQuery));
+        return matchesStatus && matchesQuery;
+      })
+      .sort((first, second) => {
+        const firstTime = new Date(first.created_at || 0).getTime();
+        const secondTime = new Date(second.created_at || 0).getTime();
+        return contactMessageSort === 'date_desc' ? secondTime - firstTime : firstTime - secondTime;
+      });
+
+    const openMessage = async (message: AnyRecord) => {
+      setContactMessageDetailLoading(true);
+      try {
+        const detail = await adminRequest<AnyRecord>('/contact-messages/' + message.id);
+        setSelectedContactMessage(detail);
+        setContactMessages((current) => current.map((item) => item.id === detail.id ? { ...item, ...detail } : item));
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'Le message ne peut pas être ouvert.');
+      } finally {
+        setContactMessageDetailLoading(false);
+      }
+    };
+
+    const updateMessageStatus = async (messageId: string, status: 'new' | 'read' | 'processed') => {
+      try {
+        const updated = await adminRequest<AnyRecord>('/contact-messages/' + messageId, { method: 'PATCH', body: { status } });
+        setContactMessages((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+        setSelectedContactMessage((current) => current?.id === updated.id ? { ...current, ...updated } : current);
+        notify(status === 'processed' ? 'Message marqué comme traité.' : 'Statut du message mis à jour.');
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'La mise à jour est impossible.');
+      }
+    };
+
+    const deleteMessage = async (message: AnyRecord) => {
+      if (!window.confirm('Supprimer définitivement le message de ' + (message.full_name || 'ce visiteur') + ' ?')) return;
+      try {
+        await adminRequest('/contact-messages/' + message.id, { method: 'DELETE' });
+        setContactMessages((current) => current.filter((item) => item.id !== message.id));
+        setSelectedContactMessage((current) => current?.id === message.id ? null : current);
+        notify('Message supprimé.');
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'La suppression est impossible.');
+      }
+    };
+
+    return <>
+      <PanelHeader eyebrow="Relation client" title="Messages reçus" description="Consultez les messages envoyés depuis le formulaire de contact du site." />
+
+      <div className="mb-5 grid gap-3 border border-[#002141]/15 bg-white p-4 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+        <label className="relative block">
+          <span className="sr-only">Rechercher un message</span>
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3A3A3A]/65" />
+          <input value={contactMessageSearch} onChange={(event) => setContactMessageSearch(event.target.value)} placeholder="Rechercher par nom, e-mail ou objet" className="admin-input pl-9" />
+        </label>
+        <label className="text-xs font-semibold text-[#002141]">Statut
+          <select value={contactMessageStatusFilter} onChange={(event) => setContactMessageStatusFilter(event.target.value)} className="admin-input mt-1">
+            <option value="">Tous les statuts</option>
+            <option value="new">Nouveau</option>
+            <option value="read">Lu</option>
+            <option value="processed">Traité</option>
+          </select>
+        </label>
+        <label className="text-xs font-semibold text-[#002141]">Trier par date
+          <select value={contactMessageSort} onChange={(event) => setContactMessageSort(event.target.value as 'date_desc' | 'date_asc')} className="admin-input mt-1">
+            <option value="date_desc">Plus récent</option>
+            <option value="date_asc">Plus ancien</option>
+          </select>
+        </label>
+      </div>
+
+      {contactMessages.length === 0 ? (
+        <EmptyState title="Aucun message" body="Les messages envoyés par les visiteurs de la boutique apparaîtront ici." />
+      ) : visibleMessages.length === 0 ? (
+        <EmptyState title="Aucun résultat" body="Aucun message ne correspond à votre recherche ou à ce filtre." />
+      ) : (
+        <div className="space-y-3">
+          {visibleMessages.map((message) => (
+            <article key={message.id} className={'border bg-white p-5 ' + (message.status === 'new' ? 'border-[#AC854B]/55' : 'border-[#002141]/15')}>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <button type="button" onClick={() => void openMessage(message)} className="min-w-0 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[#AC854B]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold text-[#002141]">{message.full_name || 'Anonyme'}</p>
+                    <span className="admin-pill">{CONTACT_MESSAGE_STATUS_LABELS[message.status] || 'Nouveau'}</span>
+                  </div>
+                  <p className="mt-1 text-sm font-semibold text-[#002141]">{message.subject || 'Demande sans objet'}</p>
+                  <p className="mt-1 max-w-3xl text-sm leading-relaxed text-[#3A3A3A]">{contactMessageExcerpt(message.message)}</p>
+                  <p className="mt-2 text-xs text-[#3A3A3A]">{message.created_at ? new Date(message.created_at).toLocaleString('fr-FR') : '—'}</p>
+                </button>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <button type="button" onClick={() => void openMessage(message)} className="admin-secondary-button" disabled={contactMessageDetailLoading}>Voir le message</button>
+                  {message.status !== 'processed' && <button type="button" onClick={() => void updateMessageStatus(message.id, 'processed')} className="admin-primary-button">Marquer traité</button>}
+                  <button type="button" onClick={() => void deleteMessage(message)} className="admin-icon-button text-red-800" aria-label={'Supprimer le message de ' + (message.full_name || 'ce visiteur')}><Trash2 className="h-4 w-4" /></button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {selectedContactMessage && (
+        <section className="mt-6 border border-[#AC854B]/50 bg-white p-5 shadow-sm sm:p-7" aria-labelledby="contact-message-detail-title">
+          <div className="flex flex-col gap-4 border-b border-[#002141]/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#AC854B]">Message ouvert</p>
+              <h2 id="contact-message-detail-title" className="font-playfair mt-1 text-2xl font-bold text-[#002141]">{selectedContactMessage.subject || 'Demande sans objet'}</h2>
+              <p className="mt-1 text-xs text-[#3A3A3A]">{selectedContactMessage.created_at ? new Date(selectedContactMessage.created_at).toLocaleString('fr-FR') : '—'} · <span className="admin-pill">{CONTACT_MESSAGE_STATUS_LABELS[selectedContactMessage.status] || 'Nouveau'}</span></p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {selectedContactMessage.status !== 'processed' && <button type="button" onClick={() => void updateMessageStatus(selectedContactMessage.id, 'processed')} className="admin-primary-button">Marquer traité</button>}
+              <button type="button" onClick={() => void deleteMessage(selectedContactMessage)} className="admin-icon-button text-red-800" aria-label="Supprimer ce message"><Trash2 className="h-4 w-4" /></button>
+              <button type="button" onClick={() => setSelectedContactMessage(null)} className="admin-secondary-button">Fermer</button>
+            </div>
+          </div>
+          <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2">
+            <div><dt className="text-xs font-bold uppercase tracking-wider text-[#3A3A3A]">Nom complet</dt><dd className="mt-1 font-semibold text-[#002141]">{selectedContactMessage.full_name || '—'}</dd></div>
+            <div><dt className="text-xs font-bold uppercase tracking-wider text-[#3A3A3A]">Téléphone / WhatsApp</dt><dd className="mt-1 font-semibold text-[#002141]">{selectedContactMessage.phone || '—'}</dd></div>
+            <div className="sm:col-span-2"><dt className="text-xs font-bold uppercase tracking-wider text-[#3A3A3A]">Adresse e-mail</dt><dd className="mt-1 font-semibold text-[#002141]">{selectedContactMessage.email || '—'}</dd></div>
+          </dl>
+          <div className="mt-5 border-t border-[#002141]/10 pt-5">
+            <p className="text-xs font-bold uppercase tracking-wider text-[#3A3A3A]">Message</p>
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-[#3A3A3A]">{selectedContactMessage.message}</p>
+          </div>
+        </section>
+      )}
+    </>;
+  };
 
   let content: React.ReactNode = renderDashboard();
   if (activeTab === 'products') content = renderProducts();

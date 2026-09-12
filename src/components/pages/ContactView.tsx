@@ -14,7 +14,8 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
     email: '',
     phone: '',
     subject: 'Renseignement sur une montre',
-    message: ''
+    message: '',
+    website: ''
   });
 
   const [submitted, setSubmitted] = useState(false);
@@ -27,12 +28,13 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
       const response = await fetch('/api/public/contact-messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ full_name: form.name, email: form.email, phone: form.phone, subject: form.subject, message: form.message })
+        body: JSON.stringify({ full_name: form.name, email: form.email, phone: form.phone, subject: form.subject, message: form.message, website: form.website })
       });
-      if (!response.ok) throw new Error();
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : 'Votre message ne peut pas être transmis pour le moment.');
       setSubmitted(true);
-    } catch {
-      setSubmissionError('Votre message ne peut pas être transmis pour le moment. Veuillez réessayer.');
+    } catch (error) {
+      setSubmissionError(error instanceof Error ? error.message : 'Votre message ne peut pas être transmis pour le moment. Veuillez réessayer.');
     }
   };
   const whatsappNumber = (siteSettings?.whatsapp_phone || siteSettings?.phone || '').replace(/\D/g, '');
@@ -163,7 +165,8 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                       email: '',
                       phone: '',
                       subject: 'Renseignement sur une montre',
-                      message: ''
+                      message: '',
+                      website: ''
                     });
                   }}
                   className="px-6 py-2.5 bg-[#002141] text-[#FAF9F7] text-xs font-semibold uppercase tracking-wider"
@@ -176,6 +179,20 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                 <h2 className="font-playfair text-xl font-bold text-[#002141] pb-2">
                   Formulaire de contact
                 </h2>
+
+                <div className="absolute -left-[10000px] h-px w-px overflow-hidden" aria-hidden="true">
+                  <label>
+                    Site web
+                    <input
+                      type="text"
+                      name="website"
+                      tabIndex={-1}
+                      autoComplete="off"
+                      value={form.website}
+                      onChange={(e) => setForm({ ...form, website: e.target.value })}
+                    />
+                  </label>
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
