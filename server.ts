@@ -223,9 +223,7 @@ function productPayload(body: Record<string, unknown>, adminId: string) {
   const stockQuantity = integerValue(body.stock_quantity, 0);
   const lowStockThreshold = integerValue(body.low_stock_threshold, 2);
   const stockPolicy = text(body.stock_policy, 30) === 'on_order' ? 'on_order' : 'standard';
-  const category = ['montres', 'parfums', 'lunettes'].includes(text(body.category, 80))
-    ? text(body.category, 80)
-    : 'montres';
+  const category = text(body.category, 80) || 'montres';
 
   return {
     name,
@@ -556,6 +554,25 @@ app.get('/api/public/products', async (_req: Request, res: Response) => {
     res.json(await hydratePublishedProducts(data || []));
   } catch {
     sendError(res, 503, 'Le catalogue est temporairement indisponible.');
+  }
+});
+
+app.get('/api/public/products/:slugOrId', async (req: Request, res: Response) => {
+  const { slugOrId } = req.params;
+  try {
+    const { data, error } = await getSupabaseAdmin()
+      .from('products')
+      .select('id, name, slug, sku, reference, brand, category, short_description, description_html, purchase_price_xof, regular_price_xof, sale_price_xof, stock_quantity, low_stock_threshold, stock_policy, attributes, colors, faq, primary_media_id, primary_image, gallery_images, value_story_title, value_story_text, provenance_summary, warranty_summary, delivery_summary, seo_title, seo_description, updated_at')
+      .eq('status', 'published')
+      .or(`slug.eq.${slugOrId},id.eq.${slugOrId}`)
+      .maybeSingle();
+    if (error || !data) {
+      return res.status(404).json({ error: 'Produit introuvable ou non publié.' });
+    }
+    const [hydrated] = await hydratePublishedProducts([data]);
+    res.json(hydrated);
+  } catch {
+    sendError(res, 503, 'Le produit est temporairement indisponible.');
   }
 });
 

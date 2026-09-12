@@ -1,14 +1,21 @@
 import React, { FormEvent, useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   BarChart3,
   BookOpen,
   Boxes,
+  Check,
   CheckCircle2,
   ChevronDown,
   ClipboardList,
   FileText,
   GalleryVerticalEnd,
+  HelpCircle,
+  Image as ImageIcon,
   KeyRound,
+  Layers,
   LayoutDashboard,
   LoaderCircle,
   LogOut,
@@ -24,8 +31,10 @@ import {
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   Star,
   Trash2,
+  Upload,
   UsersRound,
   X
 } from 'lucide-react';
@@ -71,6 +80,16 @@ const NAVIGATION: Array<{ id: AdminTab; label: string; icon: React.ElementType; 
   { id: 'pixels', label: 'Pixels', icon: BarChart3 }
 ];
 
+const slugify = (text: string) =>
+  String(text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9 -]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+
 const emptyProduct = (): AnyRecord => ({
   name: '',
   slug: '',
@@ -78,13 +97,15 @@ const emptyProduct = (): AnyRecord => ({
   reference: '',
   brand: '',
   category: 'montres',
+  custom_category: '',
   short_description: '',
   description_html: '',
-  purchase_price_xof: 0,
-  regular_price_xof: 0,
+  purchase_price_xof: '',
+  regular_price_xof: '',
   sale_price_xof: '',
   stock_quantity: 0,
   low_stock_threshold: 2,
+  stock_policy: 'standard',
   status: 'draft',
   primary_media_id: '',
   colors: '[]',
@@ -92,8 +113,14 @@ const emptyProduct = (): AnyRecord => ({
   faq: '[]',
   variants: '[]',
   media_ids: [],
+  value_story_title: '',
+  value_story_text: '',
+  provenance_summary: '',
+  warranty_summary: '',
+  delivery_summary: '',
   seo_title: '',
-  seo_description: ''
+  seo_description: '',
+  slug_manually_edited: false
 });
 
 const formatXOF = (value: number) => new Intl.NumberFormat('fr-FR').format(Number(value || 0)) + ' FCFA';
@@ -107,15 +134,26 @@ const toJsonText = (value: unknown, fallback = '[]') => {
   }
 };
 
-const toProductForm = (product: AnyRecord): AnyRecord => ({
-  ...emptyProduct(),
-  ...product,
-  colors: toJsonText(product.colors),
-  attributes: toJsonText(product.attributes, '{}'),
-  faq: toJsonText(product.faq),
-  variants: toJsonText(product.product_variants || product.variants),
-  media_ids: (product.media_assets || []).map((asset: AnyRecord) => asset.id)
-});
+const toProductForm = (product: AnyRecord): AnyRecord => {
+  const cat = String(product.category || 'montres');
+  const isStandardCat = ['montres', 'parfums', 'lunettes'].includes(cat);
+  return {
+    ...emptyProduct(),
+    ...product,
+    category: isStandardCat ? cat : 'autre',
+    custom_category: isStandardCat ? '' : cat,
+    colors: toJsonText(product.colors),
+    attributes: toJsonText(product.attributes, '{}'),
+    faq: toJsonText(product.faq),
+    variants: toJsonText(product.product_variants || product.variants),
+    media_ids: Array.isArray(product.media_assets)
+      ? product.media_assets.map((asset: AnyRecord) => asset.id)
+      : Array.isArray(product.media_ids)
+      ? product.media_ids
+      : [],
+    slug_manually_edited: Boolean(product.slug)
+  };
+};
 
 const statusLabel: Record<string, string> = {
   pending_payment: 'Commande reçue',
@@ -292,12 +330,245 @@ function ProductStructuredFields({ form, onChange }: { form: AnyRecord; onChange
   const faqs = readArray(form.faq);
   const saveAttributes = (entries: Array<[string, string]>) => onChange('attributes', JSON.stringify(Object.fromEntries(entries.filter(([key]) => key.trim()))));
 
-  return <div className="md:col-span-2 xl:col-span-3 space-y-6">
-    <fieldset className="border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Couleurs</legend><input value={colors.join(', ')} onChange={(event) => onChange('colors', JSON.stringify(event.target.value.split(',').map((value) => value.trim()).filter(Boolean)))} className="admin-input mt-2" placeholder="Acier, Bleu, Or…" /></fieldset>
-    <fieldset className="border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Caractéristiques techniques</legend><p className="mt-1 text-xs text-[#3A3A3A]">Exemples : diamètre, boîtier, verre, mouvement, réserve de marche, bracelet, étanchéité, fond de boîte.</p><div className="mt-3 space-y-2">{attributes.map(([key, value], index) => <div key={`${key}-${index}`} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]"><input value={key} onChange={(event) => { const next = [...attributes]; next[index] = [event.target.value, value]; saveAttributes(next); }} className="admin-input" placeholder="Caractéristique" /><input value={value} onChange={(event) => { const next = [...attributes]; next[index] = [key, event.target.value]; saveAttributes(next); }} className="admin-input" placeholder="Valeur" /><button type="button" onClick={() => saveAttributes(attributes.filter((_, current) => current !== index))} className="admin-icon-button text-red-800" aria-label="Supprimer la caractéristique"><Trash2 className="h-4 w-4" /></button></div>)}</div><button type="button" onClick={() => saveAttributes([...attributes, ['', '']])} className="admin-secondary-button mt-3">Ajouter une caractéristique</button></fieldset>
-    <fieldset className="border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Variantes</legend><div className="mt-3 space-y-3">{variants.map((variant, index) => <div key={index} className="grid gap-2 border border-[#002141]/10 p-3 sm:grid-cols-4"><input value={variant.name || ''} onChange={(event) => { const next = [...variants]; next[index] = { ...variant, name: event.target.value }; onChange('variants', JSON.stringify(next)); }} className="admin-input" placeholder="Nom (ex. 40 mm)" /><input value={variant.sku || ''} onChange={(event) => { const next = [...variants]; next[index] = { ...variant, sku: event.target.value }; onChange('variants', JSON.stringify(next)); }} className="admin-input" placeholder="SKU" /><input type="number" value={variant.stock_quantity ?? 0} onChange={(event) => { const next = [...variants]; next[index] = { ...variant, stock_quantity: Number(event.target.value) }; onChange('variants', JSON.stringify(next)); }} className="admin-input" placeholder="Stock" /><div className="flex gap-2"><input type="number" value={variant.sale_price_xof ?? ''} onChange={(event) => { const next = [...variants]; next[index] = { ...variant, sale_price_xof: event.target.value }; onChange('variants', JSON.stringify(next)); }} className="admin-input" placeholder="Prix FCFA" /><button type="button" onClick={() => onChange('variants', JSON.stringify(variants.filter((_, current) => current !== index)))} className="admin-icon-button text-red-800" aria-label="Supprimer la variante"><Trash2 className="h-4 w-4" /></button></div></div>)}</div><button type="button" onClick={() => onChange('variants', JSON.stringify([...variants, { name: '', sku: '', stock_quantity: 0, sale_price_xof: '', options: {}, is_active: true }]))} className="admin-secondary-button mt-3">Ajouter une variante</button></fieldset>
-    <fieldset className="border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">F.A.Q. de ce produit uniquement</legend><div className="mt-3 space-y-3">{faqs.map((faq, index) => <div key={index} className="space-y-2 border border-[#002141]/10 p-3"><input value={faq.question || ''} onChange={(event) => { const next = [...faqs]; next[index] = { ...faq, question: event.target.value }; onChange('faq', JSON.stringify(next)); }} className="admin-input" placeholder="Question" /><textarea value={faq.answer || ''} onChange={(event) => { const next = [...faqs]; next[index] = { ...faq, answer: event.target.value }; onChange('faq', JSON.stringify(next)); }} className="admin-input min-h-20" placeholder="Réponse" /><button type="button" onClick={() => onChange('faq', JSON.stringify(faqs.filter((_, current) => current !== index)))} className="text-xs font-semibold text-red-800">Supprimer</button></div>)}</div><button type="button" onClick={() => onChange('faq', JSON.stringify([...faqs, { question: '', answer: '' }]))} className="admin-secondary-button mt-3">Ajouter une question</button></fieldset>
-  </div>;
+  const loadHorlogerieTemplate = () => {
+    const template: Array<[string, string]> = [
+      ['diamètre', '40 mm'],
+      ['boîtier', 'Acier inoxydable 316L'],
+      ['verre', 'Saphir inrayable avec traitement anti-reflet'],
+      ['mouvement', 'Automatique Powermatic 80'],
+      ['réserve de marche', '80 heures'],
+      ['bracelet', 'Acier avec fermoir papillon à poussoirs'],
+      ['étanchéité', '10 bar (100 m / 330 ft)'],
+      ['fond de boîte', 'Transparent en verre saphir']
+    ];
+    saveAttributes(template);
+  };
+
+  const loadParfumsTemplate = () => {
+    const template: Array<[string, string]> = [
+      ['notes de tête', 'Bergamote, Poivre noir'],
+      ['notes de cœur', 'Iris, Jasmin d’Égypte'],
+      ['notes de fond', 'Bois de santal, Ambre, Vanille'],
+      ['contenance', '100 ml / 3.4 fl. oz.'],
+      ['famille olfactive', 'Boisé Épicé Premium']
+    ];
+    saveAttributes(template);
+  };
+
+  const loadLunettesTemplate = () => {
+    const template: Array<[string, string]> = [
+      ['monture', 'Acétate de cellulose fait main'],
+      ['couleur monture', 'Écaille de tortue / Noir profond'],
+      ['type de verre', 'Verres minéraux polarisés'],
+      ['protection uv', '100 % UV400 Catégorie 3'],
+      ['calibre / pont', '50 mm / 21 mm']
+    ];
+    saveAttributes(template);
+  };
+
+  return (
+    <div className="md:col-span-2 xl:col-span-3 space-y-6">
+      {/* Couleurs */}
+      <fieldset className="border border-[#002141]/15 p-4 bg-white">
+        <legend className="px-1 text-sm font-semibold text-[#002141]">Variantes de couleurs / finitions</legend>
+        <p className="mt-1 text-xs text-[#3A3A3A]">Saisissez les couleurs séparées par des virgules (ex. Acier, Or rose, Cuir noir).</p>
+        <input
+          value={colors.join(', ')}
+          onChange={(event) => onChange('colors', JSON.stringify(event.target.value.split(',').map((value) => value.trim()).filter(Boolean)))}
+          className="admin-input mt-2"
+          placeholder="Acier, Bleu, Or rose…"
+        />
+      </fieldset>
+
+      {/* Caractéristiques techniques */}
+      <fieldset className="border border-[#002141]/15 p-4 bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#002141]/10 pb-3">
+          <div>
+            <legend className="px-1 text-sm font-semibold text-[#002141]">Caractéristiques techniques dynamiques</legend>
+            <p className="text-xs text-[#3A3A3A]">Champs personnalisés enregistrés au format JSON réutilisable.</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={loadHorlogerieTemplate}
+              className="inline-flex items-center gap-1 rounded border border-[#002141]/20 bg-[#002141]/5 px-2.5 py-1 text-[11px] font-semibold text-[#002141] hover:bg-[#002141] hover:text-white"
+            >
+              <Sparkles className="h-3 w-3" /> Modèle Horlogerie
+            </button>
+            <button
+              type="button"
+              onClick={loadParfumsTemplate}
+              className="inline-flex items-center gap-1 rounded border border-[#002141]/20 bg-[#002141]/5 px-2.5 py-1 text-[11px] font-semibold text-[#002141] hover:bg-[#002141] hover:text-white"
+            >
+              <Sparkles className="h-3 w-3" /> Modèle Parfums
+            </button>
+            <button
+              type="button"
+              onClick={loadLunettesTemplate}
+              className="inline-flex items-center gap-1 rounded border border-[#002141]/20 bg-[#002141]/5 px-2.5 py-1 text-[11px] font-semibold text-[#002141] hover:bg-[#002141] hover:text-white"
+            >
+              <Sparkles className="h-3 w-3" /> Modèle Lunettes
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          {attributes.map(([key, value], index) => (
+            <div key={`${key}-${index}`} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
+              <input
+                value={key}
+                onChange={(event) => {
+                  const next = [...attributes];
+                  next[index] = [event.target.value, value];
+                  saveAttributes(next);
+                }}
+                className="admin-input"
+                placeholder="Ex. diamètre, mouvement, verres..."
+              />
+              <input
+                value={value}
+                onChange={(event) => {
+                  const next = [...attributes];
+                  next[index] = [key, event.target.value];
+                  saveAttributes(next);
+                }}
+                className="admin-input"
+                placeholder="Valeur technique"
+              />
+              <button
+                type="button"
+                onClick={() => saveAttributes(attributes.filter((_, current) => current !== index))}
+                className="admin-icon-button text-red-800"
+                aria-label="Supprimer la caractéristique"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={() => saveAttributes([...attributes, ['', '']])} className="admin-secondary-button mt-3">
+          + Ajouter une ligne de caractéristique
+        </button>
+      </fieldset>
+
+      {/* Variantes */}
+      <fieldset className="border border-[#002141]/15 p-4 bg-white">
+        <legend className="px-1 text-sm font-semibold text-[#002141]">Variantes produit (Taille, SKU, Stock, Prix)</legend>
+        <p className="mt-1 text-xs text-[#3A3A3A]">Définissez chaque déclinaison avec son SKU, stock et prix propre.</p>
+        <div className="mt-3 space-y-3">
+          {variants.map((variant, index) => (
+            <div key={index} className="grid gap-2 border border-[#002141]/10 p-3 sm:grid-cols-4 bg-[#FAF9F7]">
+              <input
+                value={variant.name || ''}
+                onChange={(event) => {
+                  const next = [...variants];
+                  next[index] = { ...variant, name: event.target.value };
+                  onChange('variants', JSON.stringify(next));
+                }}
+                className="admin-input"
+                placeholder="Nom (ex. Cuir Noir 40mm)"
+              />
+              <input
+                value={variant.sku || ''}
+                onChange={(event) => {
+                  const next = [...variants];
+                  next[index] = { ...variant, sku: event.target.value };
+                  onChange('variants', JSON.stringify(next));
+                }}
+                className="admin-input"
+                placeholder="SKU variante"
+              />
+              <input
+                type="number"
+                value={variant.stock_quantity ?? 0}
+                onChange={(event) => {
+                  const next = [...variants];
+                  next[index] = { ...variant, stock_quantity: Number(event.target.value) };
+                  onChange('variants', JSON.stringify(next));
+                }}
+                className="admin-input"
+                placeholder="Stock"
+              />
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  value={variant.sale_price_xof ?? ''}
+                  onChange={(event) => {
+                    const next = [...variants];
+                    next[index] = { ...variant, sale_price_xof: event.target.value };
+                    onChange('variants', JSON.stringify(next));
+                  }}
+                  className="admin-input"
+                  placeholder="Prix FCFA (si diff.)"
+                />
+                <button
+                  type="button"
+                  onClick={() => onChange('variants', JSON.stringify(variants.filter((_, current) => current !== index)))}
+                  className="admin-icon-button text-red-800"
+                  aria-label="Supprimer la variante"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => onChange('variants', JSON.stringify([...variants, { name: '', sku: '', stock_quantity: 0, sale_price_xof: '', options: {}, is_active: true }]))}
+          className="admin-secondary-button mt-3"
+        >
+          + Ajouter une variante
+        </button>
+      </fieldset>
+
+      {/* FAQ produit */}
+      <fieldset className="border border-[#002141]/15 p-4 bg-white">
+        <legend className="px-1 text-sm font-semibold text-[#002141]">F.A.Q. spécifique à cette pièce</legend>
+        <p className="mt-1 text-xs text-[#3A3A3A]">Questions fréquentes clients affichées directement sur la fiche produit.</p>
+        <div className="mt-3 space-y-3">
+          {faqs.map((faq, index) => (
+            <div key={index} className="space-y-2 border border-[#002141]/10 p-3 bg-[#FAF9F7]">
+              <input
+                value={faq.question || ''}
+                onChange={(event) => {
+                  const next = [...faqs];
+                  next[index] = { ...faq, question: event.target.value };
+                  onChange('faq', JSON.stringify(next));
+                }}
+                className="admin-input font-medium"
+                placeholder="Question (ex. Quelle est la durée de la garantie ?)"
+              />
+              <textarea
+                value={faq.answer || ''}
+                onChange={(event) => {
+                  const next = [...faqs];
+                  next[index] = { ...faq, answer: event.target.value };
+                  onChange('faq', JSON.stringify(next));
+                }}
+                className="admin-input min-h-16"
+                placeholder="Réponse détaillée..."
+              />
+              <button
+                type="button"
+                onClick={() => onChange('faq', JSON.stringify(faqs.filter((_, current) => current !== index)))}
+                className="text-xs font-semibold text-red-800 hover:underline"
+              >
+                Supprimer la question
+              </button>
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => onChange('faq', JSON.stringify([...faqs, { question: '', answer: '' }]))}
+          className="admin-secondary-button mt-3"
+        >
+          + Ajouter une question FAQ
+        </button>
+      </fieldset>
+    </div>
+  );
 }
 
 function ResourceManager({
@@ -509,6 +780,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [productSearch, setProductSearch] = useState('');
   const [productStatusFilter, setProductStatusFilter] = useState('');
   const [productCategoryFilter, setProductCategoryFilter] = useState('');
+  const [productStockFilter, setProductStockFilter] = useState('');
+  const [productSort, setProductSort] = useState<'date_desc' | 'name_asc' | 'price_asc' | 'price_desc' | 'stock_asc' | 'stock_desc'>('date_desc');
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [userSearch, setUserSearch] = useState('');
   const [orderSearch, setOrderSearch] = useState('');
@@ -592,11 +865,36 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
 
   const dashboardTotals = dashboard?.totals || {};
   const lowStockProducts = useMemo(() => products.filter((product) => Number(product.stock_quantity) <= Number(product.low_stock_threshold)), [products]);
-  const visibleProducts = useMemo(() => products.filter((product) => {
-    const query = productSearch.trim().toLocaleLowerCase('fr-FR');
-    const matchesSearch = !query || [product.name, product.reference, product.sku, product.brand].some((value) => String(value || '').toLocaleLowerCase('fr-FR').includes(query));
-    return matchesSearch && (!productStatusFilter || product.status === productStatusFilter) && (!productCategoryFilter || product.category === productCategoryFilter);
-  }), [products, productSearch, productStatusFilter, productCategoryFilter]);
+  const visibleProducts = useMemo(() => {
+    const filtered = products.filter((product) => {
+      const query = productSearch.trim().toLocaleLowerCase('fr-FR');
+      const matchesSearch = !query || [product.name, product.reference, product.sku, product.brand].some((value) => String(value || '').toLocaleLowerCase('fr-FR').includes(query));
+      const matchesCategory = !productCategoryFilter || (productCategoryFilter === 'autre' ? !['montres', 'parfums', 'lunettes'].includes(product.category) : product.category === productCategoryFilter);
+      const matchesStatus = !productStatusFilter || product.status === productStatusFilter;
+
+      const stockQty = Number(product.stock_quantity ?? 0);
+      const lowThresh = Number(product.low_stock_threshold ?? 2);
+      const policy = product.stock_policy;
+      let stockState = 'in_stock';
+      if (policy === 'on_order') stockState = 'on_order';
+      else if (stockQty <= 0) stockState = 'out_of_stock';
+      else if (stockQty <= lowThresh) stockState = 'low_stock';
+
+      const matchesStock = !productStockFilter || stockState === productStockFilter;
+
+      return matchesSearch && matchesCategory && matchesStatus && matchesStock;
+    });
+
+    return filtered.sort((a, b) => {
+      if (productSort === 'name_asc') return String(a.name || '').localeCompare(String(b.name || ''));
+      if (productSort === 'price_asc') return (Number(a.sale_price_xof || a.regular_price_xof || 0) - Number(b.sale_price_xof || b.regular_price_xof || 0));
+      if (productSort === 'price_desc') return (Number(b.sale_price_xof || b.regular_price_xof || 0) - Number(a.sale_price_xof || a.regular_price_xof || 0));
+      if (productSort === 'stock_asc') return (Number(a.stock_quantity || 0) - Number(b.stock_quantity || 0));
+      if (productSort === 'stock_desc') return (Number(b.stock_quantity || 0) - Number(a.stock_quantity || 0));
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
+  }, [products, productSearch, productStatusFilter, productCategoryFilter, productStockFilter, productSort]);
+
   const visibleOrders = useMemo(() => orders.filter((order) => {
     const query = orderSearch.trim().toLocaleLowerCase('fr-FR');
     return (!query || [order.order_number, order.customer_name, order.customer_email, order.payment_reference].some((value) => String(value || '').toLocaleLowerCase('fr-FR').includes(query))) && (!orderStatusFilter || order.status === orderStatusFilter);
@@ -614,20 +912,49 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const saveProduct = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     try {
+      const finalCategory = productForm.category === 'autre' ? (productForm.custom_category?.trim() || 'autre') : productForm.category;
+      const finalSlug = productForm.slug ? slugify(productForm.slug) : slugify(productForm.name);
+
+      if (productForm.status === 'published') {
+        if (!productForm.name?.trim()) throw new Error('Le nom du produit est obligatoire.');
+        if (!finalCategory) throw new Error('Veuillez préciser une catégorie.');
+        const regularPrice = Number(productForm.regular_price_xof || 0);
+        if (regularPrice <= 0) throw new Error('Le prix normal doit être un entier strictement supérieur à 0 FCFA.');
+        if (productForm.sale_price_xof !== '' && productForm.sale_price_xof !== null && productForm.sale_price_xof !== undefined) {
+          const salePrice = Number(productForm.sale_price_xof);
+          if (salePrice >= regularPrice) {
+            throw new Error('Le prix promo / réduit doit être strictement inférieur au prix normal. Corrigez le prix ou laissez-le vide.');
+          }
+        }
+        const mediaIds = Array.isArray(productForm.media_ids) ? productForm.media_ids : [];
+        if (!mediaIds.length && !productForm.primary_media_id) {
+          throw new Error('Au moins une image est obligatoire pour publier un produit.');
+        }
+      }
+
+      const finalPayload = {
+        ...productForm,
+        category: finalCategory,
+        slug: finalSlug
+      };
+
       let product: AnyRecord;
-      if (editingProduct?.id) product = await adminRequest(`/products/${editingProduct.id}`, { method: 'PATCH', body: productForm });
-      else product = await adminRequest('/products', { method: 'POST', body: productForm });
+      if (editingProduct?.id) product = await adminRequest(`/products/${editingProduct.id}`, { method: 'PATCH', body: finalPayload });
+      else product = await adminRequest('/products', { method: 'POST', body: finalPayload });
 
       const variants = JSON.parse(productForm.variants || '[]');
       if (Array.isArray(variants)) await adminRequest(`/products/${product.id}/variants`, { method: 'PUT', body: { variants } });
       const mediaIds = Array.isArray(productForm.media_ids) ? productForm.media_ids : [];
-      if (mediaIds.length || productForm.primary_media_id) await adminRequest(`/products/${product.id}/media`, { method: 'PUT', body: { media_ids: mediaIds, primary_media_id: productForm.primary_media_id || null } });
+      if (mediaIds.length || productForm.primary_media_id) {
+        await adminRequest(`/products/${product.id}/media`, { method: 'PUT', body: { media_ids: mediaIds, primary_media_id: productForm.primary_media_id || null } });
+      }
+
       setEditingProduct(null);
       setProductForm(emptyProduct());
       await loadTab('products');
-      notify('Produit enregistré.');
+      notify('Fiche produit enregistrée avec succès.');
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Le produit n’a pas pu être enregistré. Vérifiez les champs JSON.');
+      notify(error instanceof Error ? error.message : 'Le produit n’a pas pu être enregistré.');
     }
   };
 
@@ -1105,29 +1432,965 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     </>;
   };
 
-  const renderProducts = () => (
-    <>
-      <PanelHeader eyebrow="Commerce" title="Produits et stocks" description="Créez les fiches produit complètes, pilotez les prix, les marges, les variantes, les caractéristiques et le stock." action={<button type="button" onClick={() => { setEditingProduct({}); setProductForm(emptyProduct()); }} className="admin-primary-button"><PackagePlus className="h-4 w-4" /> Nouveau produit</button>} />
-      {editingProduct !== null && <form onSubmit={saveProduct} className="mb-8 border border-[#002141]/15 bg-white p-5 shadow-sm sm:p-7"><div className="mb-6 flex justify-between gap-4"><div><h2 className="font-playfair text-2xl font-semibold">{editingProduct.id ? 'Modifier le produit' : 'Créer un produit'}</h2><p className="mt-1 text-sm text-[#3A3A3A]">Les données structurées permettent de générer une fiche produit exhaustive.</p></div><button type="button" onClick={() => setEditingProduct(null)} className="admin-icon-button" aria-label="Fermer"><X className="h-4 w-4" /></button></div><div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-        {[
-          ['name', 'Nom du produit', true], ['brand', 'Marque'], ['sku', 'SKU'], ['reference', 'Référence'], ['slug', 'Lien produit'], ['purchase_price_xof', 'Prix d’achat FCFA'], ['regular_price_xof', 'Prix normal FCFA'], ['sale_price_xof', 'Prix actuel / réduit FCFA'], ['stock_quantity', 'Stock disponible'], ['low_stock_threshold', 'Seuil d’alerte'], ['seo_title', 'Titre SEO']
-        ].map(([name, label, required]) => <label key={name} className="text-sm font-semibold text-[#002141]">{label}<input required={Boolean(required)} type={String(name).includes('price') || String(name).includes('stock') ? 'number' : 'text'} value={String(productForm[String(name)] ?? '')} onChange={(event) => setProductForm((current) => ({ ...current, [String(name)]: event.target.value }))} className="admin-input mt-2" /></label>)}
-        <label className="text-sm font-semibold text-[#002141]">Catégorie<select value={productForm.category || 'montres'} onChange={(event) => setProductForm((current) => ({ ...current, category: event.target.value }))} className="admin-input mt-2"><option value="montres">Montres</option><option value="parfums">Parfums — masqués tant qu’aucun produit publié</option><option value="lunettes">Lunettes — masquées tant qu’aucun produit publié</option></select></label>
-        <label className="text-sm font-semibold text-[#002141]">Statut<select value={productForm.status} onChange={(event) => setProductForm((current) => ({ ...current, status: event.target.value }))} className="admin-input mt-2"><option value="draft">Brouillon</option><option value="published">Publié</option><option value="archived">Archivé</option></select></label>
-        <label className="text-sm font-semibold text-[#002141]">Politique de stock<select value={productForm.stock_policy || 'standard'} onChange={(event) => setProductForm((current) => ({ ...current, stock_policy: event.target.value }))} className="admin-input mt-2"><option value="standard">Stock géré</option><option value="on_order">Sur commande</option></select></label>
-        <label className="text-sm font-semibold text-[#002141]">Image principale<select value={productForm.primary_media_id || ''} onChange={(event) => setProductForm((current) => ({ ...current, primary_media_id: event.target.value }))} className="admin-input mt-2"><option value="">Choisir dans la galerie</option>{media.map((asset) => <option key={asset.id} value={asset.id}>{asset.file_name}</option>)}</select></label>
-        <fieldset className="md:col-span-2 xl:col-span-3 border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Galerie produit — cochez les images, puis choisissez l’image principale</legend><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{media.map((asset) => <label key={asset.id} className="flex items-center gap-2 border border-[#002141]/10 p-2 text-xs text-[#002141]"><input type="checkbox" checked={(productForm.media_ids || []).includes(asset.id)} onChange={(event) => setProductForm((current) => { const ids = Array.isArray(current.media_ids) ? current.media_ids : []; return { ...current, media_ids: event.target.checked ? [...ids, asset.id] : ids.filter((id: string) => id !== asset.id) }; })} className="h-4 w-4 accent-[#AC854B]" /><img src={asset.public_url} alt={asset.alt_text || asset.file_name} className="h-10 w-10 object-cover" /><span className="truncate">{asset.file_name}</span></label>)}</div></fieldset>
-        <label className="md:col-span-2 xl:col-span-3 text-sm font-semibold text-[#002141]">Description courte<textarea value={productForm.short_description || ''} onChange={(event) => setProductForm((current) => ({ ...current, short_description: event.target.value }))} className="admin-input mt-2 min-h-24" /></label>
-        <div className="md:col-span-2 xl:col-span-3"><RichTextEditor id="product-description" label="Description détaillée" value={productForm.description_html || ''} onChange={(value) => setProductForm((current) => ({ ...current, description_html: value }))} hint="Utilisez les titres, listes et liens pour une fiche de vente structurée." /></div>
-        {[['value_story_title', 'Titre de l’histoire produit'], ['value_story_text', 'Texte de l’histoire produit'], ['provenance_summary', 'Provenance — à renseigner uniquement si validée'], ['warranty_summary', 'Garantie / service — à renseigner uniquement si validée'], ['delivery_summary', 'Livraison — à renseigner uniquement si validée']].map(([name, label]) => <label key={name} className="md:col-span-2 xl:col-span-3 text-sm font-semibold text-[#002141]">{label}<textarea value={productForm[name] || ''} onChange={(event) => setProductForm((current) => ({ ...current, [name]: event.target.value }))} className="admin-input mt-2 min-h-20" /></label>)}
-        <ProductStructuredFields form={productForm} onChange={(field, value) => setProductForm((current) => ({ ...current, [field]: value }))} />
-        <label className="md:col-span-2 xl:col-span-3 text-sm font-semibold text-[#002141]">Description SEO<textarea value={productForm.seo_description || ''} onChange={(event) => setProductForm((current) => ({ ...current, seo_description: event.target.value }))} className="admin-input mt-2 min-h-20" /></label>
-      </div><div className="mt-7 flex flex-wrap gap-3"><button type="submit" className="admin-primary-button">Enregistrer le produit</button><button type="button" onClick={() => setEditingProduct(null)} className="admin-secondary-button">Annuler</button></div></form>}
-      {products.length > 0 && <div className="mb-5 flex flex-wrap items-end gap-3 border border-[#002141]/12 bg-white p-4"><label className="text-xs font-semibold">Rechercher<input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Nom, référence, marque…" className="admin-input mt-1 min-w-56" /></label><label className="text-xs font-semibold">Statut<select value={productStatusFilter} onChange={(event) => setProductStatusFilter(event.target.value)} className="admin-input mt-1"><option value="">Tous</option><option value="draft">Brouillon</option><option value="published">Publié</option><option value="archived">Archivé</option></select></label><label className="text-xs font-semibold">Catégorie<select value={productCategoryFilter} onChange={(event) => setProductCategoryFilter(event.target.value)} className="admin-input mt-1"><option value="">Toutes</option><option value="montres">Montres</option><option value="parfums">Parfums</option><option value="lunettes">Lunettes</option></select></label><button type="button" onClick={() => void downloadAdminCsv('/products/export.csv', 'heritage-produits.csv').catch((error) => notify(error.message))} className="admin-secondary-button">Exporter CSV</button>{selectedProductIds.length > 0 && <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void runBulkProductAction('publish')} className="admin-secondary-button">Publier ({selectedProductIds.length})</button><button type="button" onClick={() => void runBulkProductAction('unpublish')} className="admin-secondary-button">Dépublier</button><button type="button" onClick={() => void runBulkProductAction('archive')} className="admin-secondary-button">Archiver</button><button type="button" onClick={() => void runBulkProductAction('delete')} className="admin-secondary-button text-red-800">Supprimer</button></div>}</div>}
-      {products.length === 0 ? <EmptyState title="Le catalogue Supabase est vide" body="Les produits historiques doivent être repris dans Supabase avant de pouvoir être gérés ici." /> : <div className="overflow-x-auto border border-[#002141]/15 bg-white"><table className="w-full min-w-[960px] text-left text-sm"><thead className="bg-[#002141] text-[#FAF9F7]"><tr><th className="p-4"><input type="checkbox" checked={visibleProducts.length > 0 && visibleProducts.every((product) => selectedProductIds.includes(product.id))} onChange={(event) => setSelectedProductIds(event.target.checked ? visibleProducts.map((product) => product.id) : [])} aria-label="Sélectionner les produits affichés" className="accent-[#AC854B]" /></th><th className="p-4">Produit</th><th className="p-4">Prix actuel</th><th className="p-4">Marge brute</th><th className="p-4">Stock</th><th className="p-4">État</th><th className="p-4 text-right">Actions</th></tr></thead><tbody>{visibleProducts.map((product) => { const currentPrice = Number(product.sale_price_xof ?? product.regular_price_xof ?? 0); const margin = currentPrice - Number(product.purchase_price_xof || 0); const marginRate = currentPrice > 0 ? Math.round((margin / currentPrice) * 100) : 0; return <tr key={product.id} className="border-t border-[#002141]/10"><td className="p-4"><input type="checkbox" checked={selectedProductIds.includes(product.id)} onChange={(event) => setSelectedProductIds((current) => event.target.checked ? [...new Set([...current, product.id])] : current.filter((id) => id !== product.id))} aria-label={`Sélectionner ${product.name}`} className="accent-[#AC854B]" /></td><td className="p-4"><p className="font-semibold text-[#002141]">{product.name}</p><p className="mt-1 text-xs text-[#3A3A3A]">{product.reference || product.sku || 'Sans référence'}</p></td><td className="p-4">{formatXOF(currentPrice)}</td><td className="p-4 text-emerald-800">{formatXOF(margin)} <span className="text-xs">({marginRate} %)</span></td><td className="p-4"><span className={Number(product.stock_quantity) <= Number(product.low_stock_threshold) ? 'font-bold text-red-800' : ''}>{product.stock_quantity}</span></td><td className="p-4"><span className="admin-pill">{product.status}</span></td><td className="p-4"><div className="flex justify-end gap-2"><button type="button" onClick={() => { setEditingProduct(product); setProductForm(toProductForm(product)); }} className="admin-icon-button" aria-label="Modifier"><Pencil className="h-4 w-4" /></button><button type="button" onClick={() => void deleteProduct(product)} className="admin-icon-button text-red-800" aria-label="Supprimer"><Trash2 className="h-4 w-4" /></button></div></td></tr>})}</tbody></table>{visibleProducts.length === 0 && <p className="p-6 text-sm text-[#3A3A3A]">Aucun produit ne correspond aux filtres.</p>}</div>}
-      {lowStockProducts.length > 0 && <p className="mt-4 text-sm text-red-800">{lowStockProducts.length} produit(s) ont atteint leur seuil de stock.</p>}
-    </>
-  );
+  const renderProducts = () => {
+    const selectedMediaAssets = (Array.isArray(productForm.media_ids) ? productForm.media_ids : [])
+      .map((id: string) => media.find((asset) => asset.id === id))
+      .filter((asset): asset is AnyRecord => Boolean(asset));
+
+    const currentRegular = Number(productForm.regular_price_xof || 0);
+    const currentSale = productForm.sale_price_xof !== '' && productForm.sale_price_xof !== null ? Number(productForm.sale_price_xof) : null;
+    const currentPurchase = Number(productForm.purchase_price_xof || 0);
+
+    const effectivePrice = currentSale !== null && currentSale > 0 && currentSale < currentRegular ? currentSale : currentRegular;
+    const grossMargin = effectivePrice - currentPurchase;
+    const marginPercent = effectivePrice > 0 ? Math.round((grossMargin / effectivePrice) * 100) : 0;
+
+    const currentStock = Number(productForm.stock_quantity ?? 0);
+    const currentThreshold = Number(productForm.low_stock_threshold ?? 2);
+    const isOnOrder = productForm.stock_policy === 'on_order';
+
+    let autoStockStatus = { label: 'En stock', color: 'bg-emerald-100 text-emerald-800 border-emerald-300' };
+    if (isOnOrder) {
+      autoStockStatus = { label: 'Sur commande', color: 'bg-blue-100 text-blue-800 border-blue-300' };
+    } else if (currentStock <= 0) {
+      autoStockStatus = { label: 'Indisponible (Rupture)', color: 'bg-red-100 text-red-800 border-red-300' };
+    } else if (currentStock <= currentThreshold) {
+      autoStockStatus = { label: 'Stock limité', color: 'bg-amber-100 text-amber-800 border-amber-300' };
+    }
+
+    const productReviews = editingProduct?.id
+      ? (resources.reviews || []).filter((r) => r.product_id === editingProduct.id)
+      : [];
+
+    return (
+      <>
+        <PanelHeader
+          eyebrow="Commerce & Catalogue"
+          title="Produits et gestion des stocks"
+          description="Gérez les fiches produit complètes, ajustez les prix, calculez les marges en temps réel, configurez les variantes, caractéristiques et règles de stock."
+          action={
+            <button
+              type="button"
+              onClick={() => {
+                setEditingProduct({});
+                setProductForm(emptyProduct());
+              }}
+              className="admin-primary-button"
+            >
+              <PackagePlus className="h-4 w-4" /> Nouveau produit
+            </button>
+          }
+        />
+
+        {editingProduct !== null && (
+          <form onSubmit={saveProduct} className="mb-8 border border-[#002141]/15 bg-white p-5 shadow-sm sm:p-7 space-y-8">
+            <div className="flex items-center justify-between border-b border-[#002141]/10 pb-4">
+              <div>
+                <h2 className="font-playfair text-2xl font-semibold text-[#002141]">
+                  {editingProduct.id ? `Modifier le produit : ${editingProduct.name}` : 'Création d’un nouveau produit'}
+                </h2>
+                <p className="mt-1 text-sm text-[#3A3A3A]">Renseignez les détails pour publier ou préparer la fiche produit.</p>
+              </div>
+              <button type="button" onClick={() => setEditingProduct(null)} className="admin-icon-button" aria-label="Fermer">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Informations Générales */}
+            <section className="space-y-4">
+              <h3 className="text-base font-semibold text-[#002141] flex items-center gap-2 border-b border-[#002141]/10 pb-2">
+                <Boxes className="h-4 w-4 text-[#AC854B]" /> Informations générales
+              </h3>
+
+              <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                {/* Nom */}
+                <label className="text-sm font-semibold text-[#002141]">
+                  Nom du produit <span className="text-red-700">*</span>
+                  <input
+                    required
+                    type="text"
+                    value={productForm.name || ''}
+                    onChange={(event) => {
+                      const name = event.target.value;
+                      setProductForm((current) => ({
+                        ...current,
+                        name,
+                        slug: current.slug_manually_edited ? current.slug : slugify(name)
+                      }));
+                    }}
+                    className="admin-input mt-2"
+                    placeholder="ex. HERITAGE Master Chronograph 40"
+                  />
+                </label>
+
+                {/* Slug */}
+                <label className="text-sm font-semibold text-[#002141]">
+                  Slug URL <span className="text-xs font-normal text-[#3A3A3A]">(auto-généré et éditable)</span>
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      type="text"
+                      value={productForm.slug || ''}
+                      onChange={(event) => {
+                        setProductForm((current) => ({
+                          ...current,
+                          slug: slugify(event.target.value),
+                          slug_manually_edited: true
+                        }));
+                      }}
+                      className="admin-input"
+                      placeholder="heritage-master-chronograph-40"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setProductForm((current) => ({
+                          ...current,
+                          slug: slugify(current.name),
+                          slug_manually_edited: false
+                        }))
+                      }
+                      className="admin-secondary-button text-xs whitespace-nowrap"
+                    >
+                      Régénérer
+                    </button>
+                  </div>
+                </label>
+
+                {/* Catégorie */}
+                <label className="text-sm font-semibold text-[#002141]">
+                  Catégorie <span className="text-red-700">*</span>
+                  <select
+                    value={productForm.category || 'montres'}
+                    onChange={(event) => setProductForm((current) => ({ ...current, category: event.target.value }))}
+                    className="admin-input mt-2"
+                  >
+                    <option value="montres">Montres</option>
+                    <option value="parfums">Parfums (masqués si aucun produit publié)</option>
+                    <option value="lunettes">Lunettes (masquées si aucun produit publié)</option>
+                    <option value="autre">Autre catégorie (à préciser)</option>
+                  </select>
+                </label>
+
+                {productForm.category === 'autre' && (
+                  <label className="text-sm font-semibold text-[#002141]">
+                    Préciser la catégorie <span className="text-red-700">*</span>
+                    <input
+                      required
+                      type="text"
+                      value={productForm.custom_category || ''}
+                      onChange={(event) => setProductForm((current) => ({ ...current, custom_category: event.target.value }))}
+                      className="admin-input mt-2"
+                      placeholder="ex. Joaillerie, Accessoires..."
+                    />
+                  </label>
+                )}
+
+                {/* Marque */}
+                <label className="text-sm font-semibold text-[#002141]">
+                  Marque
+                  <input
+                    type="text"
+                    value={productForm.brand || ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, brand: event.target.value }))}
+                    className="admin-input mt-2"
+                    placeholder="ex. HERITAGE Genève, Tissot..."
+                  />
+                </label>
+
+                {/* Référence */}
+                <label className="text-sm font-semibold text-[#002141]">
+                  Référence produit
+                  <input
+                    type="text"
+                    value={productForm.reference || ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, reference: event.target.value }))}
+                    className="admin-input mt-2"
+                    placeholder="ex. REF-HER-8041"
+                  />
+                </label>
+
+                {/* SKU */}
+                <label className="text-sm font-semibold text-[#002141]">
+                  Code SKU
+                  <input
+                    type="text"
+                    value={productForm.sku || ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, sku: event.target.value }))}
+                    className="admin-input mt-2"
+                    placeholder="ex. SKU-MON-001"
+                  />
+                </label>
+
+                {/* Statut de publication */}
+                <label className="text-sm font-semibold text-[#002141]">
+                  Statut de publication
+                  <select
+                    value={productForm.status || 'draft'}
+                    onChange={(event) => setProductForm((current) => ({ ...current, status: event.target.value }))}
+                    className="admin-input mt-2 font-medium"
+                  >
+                    <option value="draft">Brouillon (non visible sur le site)</option>
+                    <option value="published">Publié (visible en boutique)</option>
+                    <option value="archived">Archivé (masqué)</option>
+                  </select>
+                </label>
+              </div>
+            </section>
+
+            {/* Prix & Marge commerciale */}
+            <section className="space-y-4">
+              <h3 className="text-base font-semibold text-[#002141] flex items-center gap-2 border-b border-[#002141]/10 pb-2">
+                <BarChart3 className="h-4 w-4 text-[#AC854B]" /> Prix & Marge commerciale (FCFA / XOF)
+              </h3>
+
+              <div className="grid gap-5 md:grid-cols-3">
+                <label className="text-sm font-semibold text-[#002141]">
+                  Prix d'achat FCFA
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={productForm.purchase_price_xof ?? ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, purchase_price_xof: event.target.value }))}
+                    className="admin-input mt-2"
+                    placeholder="ex. 150000"
+                  />
+                </label>
+
+                <label className="text-sm font-semibold text-[#002141]">
+                  Prix normal FCFA <span className="text-red-700">*</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={productForm.regular_price_xof ?? ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, regular_price_xof: event.target.value }))}
+                    className="admin-input mt-2 font-bold text-[#002141]"
+                    placeholder="ex. 250000"
+                  />
+                </label>
+
+                <label className="text-sm font-semibold text-[#002141]">
+                  Prix actuel / Promo FCFA
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={productForm.sale_price_xof ?? ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, sale_price_xof: event.target.value }))}
+                    className="admin-input mt-2"
+                    placeholder="Laissez vide si aucun prix réduit"
+                  />
+                </label>
+              </div>
+
+              {/* Règle et calcul automatique de la marge */}
+              <div className="border border-[#002141]/15 bg-[#FAF9F7] p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-[#AC854B]">Calculateur de marge brute</p>
+                  <p className="mt-1 text-sm font-semibold text-[#002141]">
+                    Prix de vente effectif : <span className="text-[#AC854B]">{formatXOF(effectivePrice)}</span>
+                  </p>
+                  <p className="text-xs text-[#3A3A3A] mt-0.5">
+                    Prix d'achat renseigné : {currentPurchase > 0 ? formatXOF(currentPurchase) : 'Non renseigné'}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-4 border-t md:border-t-0 md:border-l border-[#002141]/15 pt-3 md:pt-0 md:pl-6">
+                  <div>
+                    <p className="text-xs text-[#3A3A3A]">Marge brute</p>
+                    <p className={`text-base font-bold ${grossMargin >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {formatXOF(grossMargin)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-[#3A3A3A]">Taux de marge</p>
+                    <p className={`text-base font-bold ${marginPercent >= 20 ? 'text-emerald-700' : marginPercent > 0 ? 'text-amber-700' : 'text-red-700'}`}>
+                      {marginPercent} %
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Vérification du prix promo */}
+              {currentSale !== null && currentSale > 0 && currentSale >= currentRegular && (
+                <div className="flex items-center gap-2 border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700" />
+                  <p>
+                    <strong>Règle de prix :</strong> Le prix promo ({formatXOF(currentSale)}) est supérieur ou égal au prix normal ({formatXOF(currentRegular)}). Aucun prix barré ne sera affiché côté public.
+                  </p>
+                </div>
+              )}
+              {currentSale !== null && currentSale > 0 && currentSale < currentRegular && currentRegular > 0 && (
+                <div className="flex items-center gap-2 border border-emerald-300 bg-emerald-50 p-3 text-xs text-emerald-900">
+                  <Check className="h-4 w-4 shrink-0 text-emerald-700" />
+                  <p>
+                    <strong>Prix barré actif :</strong> Réduction de {Math.round(((currentRegular - currentSale) / currentRegular) * 100)} % sur le prix public ({formatXOF(currentRegular)} → {formatXOF(currentSale)}).
+                  </p>
+                </div>
+              )}
+            </section>
+
+            {/* Gestion des Stocks */}
+            <section className="space-y-4">
+              <h3 className="text-base font-semibold text-[#002141] flex items-center gap-2 border-b border-[#002141]/10 pb-2">
+                <Boxes className="h-4 w-4 text-[#AC854B]" /> Stock & Politique de disponibilité
+              </h3>
+
+              <div className="grid gap-5 md:grid-cols-3">
+                <label className="text-sm font-semibold text-[#002141]">
+                  Quantité disponible en stock
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={productForm.stock_quantity ?? 0}
+                    onChange={(event) => setProductForm((current) => ({ ...current, stock_quantity: Number(event.target.value) }))}
+                    className="admin-input mt-2"
+                  />
+                </label>
+
+                <label className="text-sm font-semibold text-[#002141]">
+                  Seuil d'alerte stock faible
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={productForm.low_stock_threshold ?? 2}
+                    onChange={(event) => setProductForm((current) => ({ ...current, low_stock_threshold: Number(event.target.value) }))}
+                    className="admin-input mt-2"
+                  />
+                </label>
+
+                <label className="text-sm font-semibold text-[#002141]">
+                  Politique de stock
+                  <select
+                    value={productForm.stock_policy || 'standard'}
+                    onChange={(event) => setProductForm((current) => ({ ...current, stock_policy: event.target.value }))}
+                    className="admin-input mt-2"
+                  >
+                    <option value="standard">Stock géré (avec décrémentation)</option>
+                    <option value="on_order">Sur commande (sans blocage stock)</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-[#3A3A3A]">Statut calculé automatiquement :</span>
+                <span className={`inline-flex items-center px-3 py-1 text-xs font-bold border ${autoStockStatus.color}`}>
+                  {autoStockStatus.label}
+                </span>
+              </div>
+            </section>
+
+            {/* Galerie Multi-Images & Ordre & Alt Text */}
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#002141]/10 pb-2">
+                <h3 className="text-base font-semibold text-[#002141] flex items-center gap-2">
+                  <ImageIcon className="h-4 w-4 text-[#AC854B]" /> Galerie d’images & Image principale
+                </h3>
+                <label className="admin-secondary-button cursor-pointer text-xs">
+                  <Upload className="h-3.5 w-3.5" /> Téléverser de nouvelles images
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/jpeg,image/png,image/webp,image/avif"
+                    className="sr-only"
+                    onChange={uploadMedia}
+                  />
+                </label>
+              </div>
+
+              <p className="text-xs text-[#3A3A3A]">
+                🔒 <strong>Authenticité :</strong> Seules les vraies photos de produits avec un texte alternatif explicite sont autorisées. Les images générées par IA sont refusées.
+              </p>
+
+              {/* Images sélectionnées pour ce produit */}
+              {selectedMediaAssets.length > 0 && (
+                <div className="space-y-2 border border-[#002141]/15 p-4 bg-[#FAF9F7]">
+                  <p className="text-xs font-semibold text-[#002141] uppercase tracking-wider">
+                    Images rattachées au produit ({selectedMediaAssets.length})
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {selectedMediaAssets.map((asset, index) => {
+                      const isPrimary = productForm.primary_media_id === asset.id || (!productForm.primary_media_id && index === 0);
+                      return (
+                        <div key={asset.id} className="border border-[#002141]/15 bg-white p-3 flex flex-col justify-between gap-3">
+                          <div className="flex gap-3">
+                            <img src={asset.public_url} alt={asset.alt_text || ''} className="h-16 w-16 object-cover shrink-0 border" />
+                            <div className="space-y-1.5 flex-1 min-w-0">
+                              <p className="text-xs font-semibold text-[#002141] truncate">{asset.file_name}</p>
+                              <input
+                                type="text"
+                                value={asset.alt_text || ''}
+                                placeholder="Texte alternatif (obligatoire)*"
+                                onChange={async (e) => {
+                                  const newAlt = e.target.value;
+                                  setMedia((current) => current.map((m) => (m.id === asset.id ? { ...m, alt_text: newAlt } : m)));
+                                  try {
+                                    await adminRequest(`/media/${asset.id}`, { method: 'PATCH', body: { alt_text: newAlt } });
+                                  } catch {
+                                    /* quiet fail */
+                                  }
+                                }}
+                                className="admin-input text-xs py-1"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between border-t border-[#002141]/10 pt-2 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => setProductForm((current) => ({ ...current, primary_media_id: asset.id }))}
+                              className={`px-2 py-0.5 font-semibold text-[11px] ${
+                                isPrimary
+                                  ? 'bg-[#002141] text-[#FAF9F7]'
+                                  : 'border border-[#002141]/20 text-[#002141] hover:bg-[#002141]/5'
+                              }`}
+                            >
+                              {isPrimary ? '★ Principale' : 'Définir principale'}
+                            </button>
+
+                            <div className="flex items-center gap-1">
+                              {index > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const nextIds = [...productForm.media_ids];
+                                    const temp = nextIds[index - 1];
+                                    nextIds[index - 1] = nextIds[index];
+                                    nextIds[index] = temp;
+                                    setProductForm((current) => ({ ...current, media_ids: nextIds }));
+                                  }}
+                                  className="admin-icon-button"
+                                  title="Monter"
+                                >
+                                  <ArrowUp className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                              {index < selectedMediaAssets.length - 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const nextIds = [...productForm.media_ids];
+                                    const temp = nextIds[index + 1];
+                                    nextIds[index + 1] = nextIds[index];
+                                    nextIds[index] = temp;
+                                    setProductForm((current) => ({ ...current, media_ids: nextIds }));
+                                  }}
+                                  className="admin-icon-button"
+                                  title="Descendre"
+                                >
+                                  <ArrowDown className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setProductForm((current) => {
+                                    const ids = current.media_ids.filter((id: string) => id !== asset.id);
+                                    return {
+                                      ...current,
+                                      media_ids: ids,
+                                      primary_media_id: current.primary_media_id === asset.id ? (ids[0] || '') : current.primary_media_id
+                                    };
+                                  })
+                                }
+                                className="admin-icon-button text-red-800"
+                                title="Retirer"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Sélectionner dans la galerie globale */}
+              <fieldset className="border border-[#002141]/15 p-4">
+                <legend className="px-1 text-sm font-semibold text-[#002141]">Cocher des visuels dans la galerie globale</legend>
+                <div className="mt-2 max-h-48 overflow-y-auto grid gap-2 sm:grid-cols-2 lg:grid-cols-4 p-1">
+                  {media.map((asset) => {
+                    const isChecked = (productForm.media_ids || []).includes(asset.id);
+                    return (
+                      <label key={asset.id} className={`flex items-center gap-2 border p-2 text-xs cursor-pointer ${isChecked ? 'border-[#002141] bg-[#002141]/5 font-semibold' : 'border-[#002141]/10 bg-white'}`}>
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            setProductForm((current) => {
+                              const ids = Array.isArray(current.media_ids) ? current.media_ids : [];
+                              const nextIds = e.target.checked ? [...ids, asset.id] : ids.filter((id: string) => id !== asset.id);
+                              return {
+                                ...current,
+                                media_ids: nextIds,
+                                primary_media_id: current.primary_media_id || nextIds[0] || ''
+                              };
+                            });
+                          }}
+                          className="h-4 w-4 accent-[#AC854B]"
+                        />
+                        <img src={asset.public_url} alt="" className="h-8 w-8 object-cover shrink-0" />
+                        <span className="truncate">{asset.file_name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
+            </section>
+
+            {/* Descriptions & Histoire */}
+            <section className="space-y-4">
+              <h3 className="text-base font-semibold text-[#002141] flex items-center gap-2 border-b border-[#002141]/10 pb-2">
+                <FileText className="h-4 w-4 text-[#AC854B]" /> Descriptions & Contenu de vente
+              </h3>
+
+              <label className="block text-sm font-semibold text-[#002141]">
+                Description courte (accroche)
+                <textarea
+                  value={productForm.short_description || ''}
+                  onChange={(event) => setProductForm((current) => ({ ...current, short_description: event.target.value }))}
+                  className="admin-input mt-2 min-h-20"
+                  placeholder="Accroche commerciale résumée pour les aperçus et cartes produit..."
+                />
+              </label>
+
+              <div>
+                <RichTextEditor
+                  id="product-description"
+                  label="Description détaillée complète"
+                  value={productForm.description_html || ''}
+                  onChange={(value) => setProductForm((current) => ({ ...current, description_html: value }))}
+                  hint="Présentez l'histoire de la pièce, le savoir-faire horloger ou la création olfactive."
+                />
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="text-sm font-semibold text-[#002141]">
+                  Titre de l'histoire du produit
+                  <input
+                    type="text"
+                    value={productForm.value_story_title || ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, value_story_title: event.target.value }))}
+                    className="admin-input mt-2"
+                    placeholder="ex. L'héritage d'une pièce d'exception"
+                  />
+                </label>
+
+                <label className="text-sm font-semibold text-[#002141]">
+                  Texte de l'histoire du produit
+                  <textarea
+                    value={productForm.value_story_text || ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, value_story_text: event.target.value }))}
+                    className="admin-input mt-2 min-h-16"
+                    placeholder="Savoir-faire, histoire de la marque..."
+                  />
+                </label>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <label className="text-sm font-semibold text-[#002141]">
+                  Résumé Provenance
+                  <textarea
+                    value={productForm.provenance_summary || ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, provenance_summary: event.target.value }))}
+                    className="admin-input mt-2 min-h-16"
+                    placeholder="ex. Fabriqué en Suisse, certifié d'origine"
+                  />
+                </label>
+
+                <label className="text-sm font-semibold text-[#002141]">
+                  Garantie & Service
+                  <textarea
+                    value={productForm.warranty_summary || ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, warranty_summary: event.target.value }))}
+                    className="admin-input mt-2 min-h-16"
+                    placeholder="ex. Garantie internationale 2 ans"
+                  />
+                </label>
+
+                <label className="text-sm font-semibold text-[#002141]">
+                  Modalités de Livraison
+                  <textarea
+                    value={productForm.delivery_summary || ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, delivery_summary: event.target.value }))}
+                    className="admin-input mt-2 min-h-16"
+                    placeholder="ex. Livraison sécurisée sous 24-48h à Abidjan"
+                  />
+                </label>
+              </div>
+            </section>
+
+            {/* Variantes, Caractéristiques Techniques & FAQ */}
+            <section className="space-y-4">
+              <h3 className="text-base font-semibold text-[#002141] flex items-center gap-2 border-b border-[#002141]/10 pb-2">
+                <SlidersHorizontal className="h-4 w-4 text-[#AC854B]" /> Données techniques & FAQ produit
+              </h3>
+
+              <ProductStructuredFields form={productForm} onChange={(field, value) => setProductForm((current) => ({ ...current, [field]: value }))} />
+            </section>
+
+            {/* Avis clients modérés rattachés */}
+            {editingProduct.id && (
+              <section className="space-y-3 border-t border-[#002141]/10 pt-4">
+                <h3 className="text-base font-semibold text-[#002141] flex items-center gap-2">
+                  <Star className="h-4 w-4 text-[#AC854B]" /> Avis clients associés à ce produit ({productReviews.length})
+                </h3>
+                {productReviews.length === 0 ? (
+                  <p className="text-xs text-[#3A3A3A]">Aucun avis déposé pour le moment sur ce produit.</p>
+                ) : (
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {productReviews.map((rev) => (
+                      <div key={rev.id} className="border border-[#002141]/10 p-3 bg-[#FAF9F7] text-xs flex justify-between items-center gap-3">
+                        <div>
+                          <p className="font-semibold text-[#002141]">
+                            {rev.author_name} — {'★'.repeat(rev.rating)} ({rev.status})
+                          </p>
+                          <p className="text-[#3A3A3A] mt-1">{rev.comment}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => selectTab('reviews')}
+                          className="admin-secondary-button text-[11px] whitespace-nowrap"
+                        >
+                          Gérer les avis
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* Référencement SEO */}
+            <section className="space-y-4 border-t border-[#002141]/10 pt-4">
+              <h3 className="text-base font-semibold text-[#002141] flex items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4 text-[#AC854B]" /> Métadonnées SEO
+              </h3>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="text-sm font-semibold text-[#002141]">
+                  Titre SEO (Balise Title)
+                  <input
+                    type="text"
+                    value={productForm.seo_title || ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, seo_title: event.target.value }))}
+                    className="admin-input mt-2"
+                    placeholder="Mettre un titre court et percutant..."
+                  />
+                </label>
+
+                <label className="text-sm font-semibold text-[#002141]">
+                  Méta Description SEO
+                  <textarea
+                    value={productForm.seo_description || ''}
+                    onChange={(event) => setProductForm((current) => ({ ...current, seo_description: event.target.value }))}
+                    className="admin-input mt-2 min-h-16"
+                    placeholder="Description pour les moteurs de recherche Google..."
+                  />
+                </label>
+              </div>
+            </section>
+
+            {/* Actions de validation */}
+            <div className="flex flex-wrap gap-3 border-t border-[#002141]/10 pt-6">
+              <button type="submit" className="admin-primary-button">
+                Enregistrer la fiche produit
+              </button>
+              <button type="button" onClick={() => setEditingProduct(null)} className="admin-secondary-button">
+                Annuler
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Barre de Recherche & Filtres */}
+        <div className="mb-5 flex flex-wrap items-end justify-between gap-3 border border-[#002141]/12 bg-white p-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-xs font-semibold text-[#002141]">
+              Rechercher
+              <input
+                value={productSearch}
+                onChange={(event) => setProductSearch(event.target.value)}
+                placeholder="Nom, réf, SKU, marque..."
+                className="admin-input mt-1 min-w-56"
+              />
+            </label>
+
+            <label className="text-xs font-semibold text-[#002141]">
+              Catégorie
+              <select
+                value={productCategoryFilter}
+                onChange={(event) => setProductCategoryFilter(event.target.value)}
+                className="admin-input mt-1"
+              >
+                <option value="">Toutes les catégories</option>
+                <option value="montres">Montres</option>
+                <option value="parfums">Parfums</option>
+                <option value="lunettes">Lunettes</option>
+                <option value="autre">Autres catégories</option>
+              </select>
+            </label>
+
+            <label className="text-xs font-semibold text-[#002141]">
+              Statut
+              <select
+                value={productStatusFilter}
+                onChange={(event) => setProductStatusFilter(event.target.value)}
+                className="admin-input mt-1"
+              >
+                <option value="">Tous les statuts</option>
+                <option value="published">Publiés</option>
+                <option value="draft">Brouillons</option>
+                <option value="archived">Archivés</option>
+              </select>
+            </label>
+
+            <label className="text-xs font-semibold text-[#002141]">
+              État du stock
+              <select
+                value={productStockFilter}
+                onChange={(event) => setProductStockFilter(event.target.value)}
+                className="admin-input mt-1"
+              >
+                <option value="">Tous les niveaux</option>
+                <option value="in_stock">En stock</option>
+                <option value="low_stock">Stock limité</option>
+                <option value="out_of_stock">Rupture (0)</option>
+                <option value="on_order">Sur commande</option>
+              </select>
+            </label>
+
+            <label className="text-xs font-semibold text-[#002141]">
+              Trier par
+              <select
+                value={productSort}
+                onChange={(event) => setProductSort(event.target.value as any)}
+                className="admin-input mt-1"
+              >
+                <option value="date_desc">Date (plus récents)</option>
+                <option value="name_asc">Nom (A-Z)</option>
+                <option value="price_asc">Prix croissant</option>
+                <option value="price_desc">Prix décroissant</option>
+                <option value="stock_asc">Stock croissant</option>
+                <option value="stock_desc">Stock décroissant</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void downloadAdminCsv('/products/export.csv', 'heritage-produits.csv').catch((error) => notify(error.message))}
+              className="admin-secondary-button"
+            >
+              Exporter CSV
+            </button>
+
+            {selectedProductIds.length > 0 && (
+              <div className="flex flex-wrap gap-2 border-l border-[#002141]/15 pl-3">
+                <button type="button" onClick={() => void runBulkProductAction('publish')} className="admin-secondary-button">
+                  Publier ({selectedProductIds.length})
+                </button>
+                <button type="button" onClick={() => void runBulkProductAction('unpublish')} className="admin-secondary-button">
+                  Dépublier
+                </button>
+                <button type="button" onClick={() => void runBulkProductAction('archive')} className="admin-secondary-button">
+                  Archiver
+                </button>
+                <button type="button" onClick={() => void runBulkProductAction('delete')} className="admin-secondary-button text-red-800">
+                  Supprimer
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Liste des Produits */}
+        {products.length === 0 ? (
+          <EmptyState title="Le catalogue Supabase est vide" body="Créez votre premier produit pour alimenter la boutique." />
+        ) : (
+          <div className="overflow-x-auto border border-[#002141]/15 bg-white">
+            <table className="w-full min-w-[960px] text-left text-sm">
+              <thead className="bg-[#002141] text-[#FAF9F7]">
+                <tr>
+                  <th className="p-4 w-10">
+                    <input
+                      type="checkbox"
+                      checked={visibleProducts.length > 0 && visibleProducts.every((product) => selectedProductIds.includes(product.id))}
+                      onChange={(event) => setSelectedProductIds(event.target.checked ? visibleProducts.map((product) => product.id) : [])}
+                      aria-label="Sélectionner tous les produits affichés"
+                      className="accent-[#AC854B]"
+                    />
+                  </th>
+                  <th className="p-4">Produit</th>
+                  <th className="p-4">Catégorie</th>
+                  <th className="p-4">Prix de vente</th>
+                  <th className="p-4">Marge brute</th>
+                  <th className="p-4">Stock</th>
+                  <th className="p-4">Statut</th>
+                  <th className="p-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#002141]/10">
+                {visibleProducts.map((product) => {
+                  const currentPrice = Number(product.sale_price_xof ?? product.regular_price_xof ?? 0);
+                  const isSale = product.sale_price_xof && Number(product.sale_price_xof) > 0 && Number(product.sale_price_xof) < Number(product.regular_price_xof);
+                  const purchase = Number(product.purchase_price_xof || 0);
+                  const margin = currentPrice - purchase;
+                  const marginRate = currentPrice > 0 ? Math.round((margin / currentPrice) * 100) : 0;
+
+                  const stockQty = Number(product.stock_quantity ?? 0);
+                  const lowThresh = Number(product.low_stock_threshold ?? 2);
+                  const isLow = stockQty > 0 && stockQty <= lowThresh;
+                  const isOut = stockQty <= 0 && product.stock_policy !== 'on_order';
+
+                  const primaryAsset = Array.isArray(product.media_assets)
+                    ? product.media_assets.find((a: AnyRecord) => a.id === product.primary_media_id) || product.media_assets[0]
+                    : null;
+
+                  return (
+                    <tr key={product.id} className="hover:bg-[#FAF9F7] transition">
+                      <td className="p-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedProductIds.includes(product.id)}
+                          onChange={(event) =>
+                            setSelectedProductIds((current) =>
+                              event.target.checked ? [...new Set([...current, product.id])] : current.filter((id) => id !== product.id)
+                            )
+                          }
+                          aria-label={`Sélectionner ${product.name}`}
+                          className="accent-[#AC854B]"
+                        />
+                      </td>
+
+                      <td className="p-4">
+                        <div className="flex items-center gap-3">
+                          {primaryAsset?.public_url ? (
+                            <img src={primaryAsset.public_url} alt="" className="h-11 w-11 object-cover border shrink-0" />
+                          ) : (
+                            <div className="h-11 w-11 bg-[#002141]/5 flex items-center justify-center text-[10px] font-bold text-[#002141] shrink-0 border">
+                              SANS IMG
+                            </div>
+                          )}
+                          <div>
+                            <p className="font-semibold text-[#002141]">{product.name}</p>
+                            <p className="text-xs text-[#3A3A3A]">
+                              {product.brand ? `${product.brand} · ` : ''}
+                              Réf: {product.reference || product.sku || product.slug}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="p-4">
+                        <span className="capitalize text-xs font-semibold px-2 py-0.5 border border-[#002141]/15 bg-[#002141]/5 text-[#002141]">
+                          {product.category}
+                        </span>
+                      </td>
+
+                      <td className="p-4">
+                        <p className="font-semibold text-[#002141]">{formatXOF(currentPrice)}</p>
+                        {isSale && (
+                          <p className="text-xs text-[#3A3A3A] line-through">
+                            {formatXOF(product.regular_price_xof)}
+                          </p>
+                        )}
+                      </td>
+
+                      <td className="p-4">
+                        {purchase > 0 ? (
+                          <p className={`font-medium ${margin >= 0 ? 'text-emerald-800' : 'text-red-800'}`}>
+                            {formatXOF(margin)} <span className="text-xs">({marginRate}%)</span>
+                          </p>
+                        ) : (
+                          <span className="text-xs text-[#3A3A3A]">P.A. non saisi</span>
+                        )}
+                      </td>
+
+                      <td className="p-4">
+                        {product.stock_policy === 'on_order' ? (
+                          <span className="px-2 py-0.5 text-xs font-semibold bg-blue-50 text-blue-800 border border-blue-200">
+                            Sur commande
+                          </span>
+                        ) : isOut ? (
+                          <span className="px-2 py-0.5 text-xs font-bold bg-red-100 text-red-800 border border-red-300">
+                            Rupture (0)
+                          </span>
+                        ) : isLow ? (
+                          <span className="px-2 py-0.5 text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                            Limité ({stockQty})
+                          </span>
+                        ) : (
+                          <span className="font-semibold text-[#002141]">{stockQty}</span>
+                        )}
+                      </td>
+
+                      <td className="p-4">
+                        <span
+                          className={`px-2 py-0.5 text-xs font-bold uppercase tracking-wider ${
+                            product.status === 'published'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : product.status === 'archived'
+                              ? 'bg-gray-100 text-gray-700 border border-gray-300'
+                              : 'bg-amber-50 text-amber-900 border border-amber-200'
+                          }`}
+                        >
+                          {product.status === 'published' ? 'Publié' : product.status === 'archived' ? 'Archivé' : 'Brouillon'}
+                        </span>
+                      </td>
+
+                      <td className="p-4 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingProduct(product);
+                              setProductForm(toProductForm(product));
+                            }}
+                            className="admin-icon-button"
+                            aria-label="Modifier"
+                            title="Modifier"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void deleteProduct(product)}
+                            className="admin-icon-button text-red-800"
+                            aria-label="Supprimer"
+                            title="Supprimer"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {visibleProducts.length === 0 && (
+              <p className="p-6 text-sm text-[#3A3A3A] text-center">Aucun produit ne correspond à votre recherche ou à vos filtres.</p>
+            )}
+          </div>
+        )}
+
+        {lowStockProducts.length > 0 && (
+          <p className="mt-4 text-sm font-semibold text-red-800 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" />
+            {lowStockProducts.length} produit(s) ont atteint ou dépassé leur seuil d'alerte de stock.
+          </p>
+        )}
+      </>
+    );
+  };
 
   const renderOrders = () => <>
     <PanelHeader eyebrow="Commerce" title="Commandes" description="Recherchez, imprimez ou exportez les commandes. Chaque changement est journalisé ; une preuve est requise avant “Livrée”." action={<button type="button" onClick={() => void downloadAdminCsv('/orders/export.csv', 'heritage-commandes.csv').catch((error) => notify(error.message))} className="admin-secondary-button">Exporter CSV</button>} />
