@@ -1578,30 +1578,45 @@ app.get('/api/admin/users', async (_req: AdminRequest, res: Response) => {
   try {
     const admin = getSupabaseAdmin();
     const [profilesResult, ordersResult] = await Promise.all([
-      admin.from('profiles').select('id, email, full_name, phone, commune, delivery_address, is_active, role, created_at, updated_at').or('role.eq.customer,role.is.null').neq('role', 'admin').order('created_at', { ascending: false }),
-      admin.from('orders').select('id, user_id, customer_email, order_number, total_xof, status, created_at').order('created_at', { ascending: false })
+      admin
+        .from('profiles')
+        .select('id, email, full_name, phone, commune, delivery_address, shipping_address, is_active, role, created_at, updated_at')
+        .or('role.eq.customer,role.is.null')
+        .neq('role', 'admin')
+        .order('created_at', { ascending: false }),
+      admin
+        .from('orders')
+        .select('id, user_id, customer_email, order_number, total_xof, status, created_at, delivery_address, shipping_address')
+        .order('created_at', { ascending: false })
     ]);
     if (profilesResult.error || ordersResult.error) throw profilesResult.error || ordersResult.error;
+
     const orderLookup = new Map<string, any[]>();
     (ordersResult.data || []).forEach((order: any) => {
       const keys = [order.user_id, order.customer_email?.toLowerCase()].filter(Boolean);
       keys.forEach((key) => {
         const existing = orderLookup.get(String(key)) || [];
-        existing.push(order);
+        if (!existing.some((o: any) => o.id === order.id)) {
+          existing.push(order);
+        }
         orderLookup.set(String(key), existing);
       });
     });
+
     res.json((profilesResult.data || []).map((profile: any) => {
       const customerOrders = orderLookup.get(String(profile.id)) || orderLookup.get(String(profile.email || '').toLowerCase()) || [];
+      const validOrders = customerOrders.filter((order: any) => !['cancelled', 'refunded', 'payment_failed'].includes(order.status));
+      const totalSpent = validOrders.reduce((sum: number, order: any) => sum + Number(order.total_xof || 0), 0);
       return {
         ...profile,
         role: profile.role || 'customer',
         order_count: customerOrders.length,
-        total_spent_xof: customerOrders.filter((order: any) => !['cancelled', 'refunded', 'payment_failed'].includes(order.status)).reduce((sum: number, order: any) => sum + Number(order.total_xof || 0), 0),
-        orders: customerOrders.slice(0, 10)
+        total_spent_xof: totalSpent,
+        orders: customerOrders
       };
     }));
-  } catch {
+  } catch (err: any) {
+    console.error('Error in GET /api/admin/users:', err);
     sendError(res, 503, 'La liste des utilisateurs est indisponible.');
   }
 });
@@ -1611,10 +1626,14 @@ app.patch('/api/admin/users/:id', async (req: AdminRequest, res: Response) => {
 
   try {
     const admin = getSupabaseAdmin();
-    const { error: authError } = await admin.auth.admin.updateUserById(req.params.id, {
-      ban_duration: req.body.is_active ? 'none' : '876000h'
-    });
-    if (authError) throw authError;
+    try {
+      await admin.auth.admin.updateUserById(req.params.id, {
+        ban_duration: req.body.is_active ? 'none' : '876000h'
+      });
+    } catch (authErr) {
+      console.warn('Supabase Auth update warning (profile only or external auth):', authErr);
+    }
+
     const { data, error } = await admin
       .from('profiles')
       .update({ is_active: req.body.is_active, role: 'customer' })
@@ -1622,28 +1641,85 @@ app.patch('/api/admin/users/:id', async (req: AdminRequest, res: Response) => {
       .neq('role', 'admin')
       .select()
       .single();
+
     if (error) throw error;
-    await writeAudit(req.admin!.id, 'updated', 'customer', req.params.id, { is_active: req.body.is_active });
+    await writeAudit(req.admin!.id, 'toggled_user_status', 'customer', req.params.id, { is_active: req.body.is_active });
     res.json(data);
-  } catch {
+  } catch (err: any) {
+    console.error('Error in PATCH /api/admin/users/:id:', err);
     sendError(res, 400, 'La mise à jour de l’utilisateur a échoué.');
   }
 });
 
 app.get('/api/admin/users/export.csv', async (_req: AdminRequest, res: Response) => {
   try {
-    const { data, error } = await getSupabaseAdmin().from('profiles')
-      .select('full_name, email, phone, commune, is_active, created_at')
-      .or('role.eq.customer,role.is.null')
-      .neq('role', 'admin')
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    const columns = ['full_name', 'email', 'phone', 'commune', 'is_active', 'created_at'];
-    const csv = [columns.join(','), ...(data || []).map((row: any) => columns.map((column) => csvCell(row[column])).join(','))].join('\n');
+    const admin = getSupabaseAdmin();
+    const [profilesResult, ordersResult] = await Promise.all([
+      admin
+        .from('profiles')
+        .select('id, full_name, email, phone, commune, delivery_address, shipping_address, is_active, created_at')
+        .or('role.eq.customer,role.is.null')
+        .neq('role', 'admin')
+        .order('created_at', { ascending: false }),
+      admin
+        .from('orders')
+        .select('id, user_id, customer_email, total_xof, status')
+    ]);
+
+    if (profilesResult.error) throw profilesResult.error;
+
+    const orderLookup = new Map<string, any[]>();
+    (ordersResult.data || []).forEach((order: any) => {
+      const keys = [order.user_id, order.customer_email?.toLowerCase()].filter(Boolean);
+      keys.forEach((key) => {
+        const existing = orderLookup.get(String(key)) || [];
+        if (!existing.some((o: any) => o.id === order.id)) {
+          existing.push(order);
+        }
+        orderLookup.set(String(key), existing);
+      });
+    });
+
+    const rows = (profilesResult.data || []).map((profile: any) => {
+      const customerOrders = orderLookup.get(String(profile.id)) || orderLookup.get(String(profile.email || '').toLowerCase()) || [];
+      const validOrders = customerOrders.filter((o: any) => !['cancelled', 'refunded', 'payment_failed'].includes(o.status));
+      const totalSpent = validOrders.reduce((sum: number, o: any) => sum + Number(o.total_xof || 0), 0);
+      const address = profile.delivery_address || profile.shipping_address || profile.commune || 'Non renseignée';
+
+      return {
+        full_name: profile.full_name || 'Client',
+        email: profile.email || '',
+        phone: profile.phone || '',
+        commune: profile.commune || '',
+        address,
+        order_count: customerOrders.length,
+        total_spent_xof: totalSpent,
+        is_active: profile.is_active !== false ? 'Actif' : 'Bloqué/Désactivé',
+        created_at: profile.created_at ? new Date(profile.created_at).toLocaleDateString('fr-FR') : ''
+      };
+    });
+
+    const columns = [
+      { key: 'full_name', label: 'Nom Complet' },
+      { key: 'email', label: 'Email' },
+      { key: 'phone', label: 'Téléphone' },
+      { key: 'commune', label: 'Commune' },
+      { key: 'address', label: 'Adresse de Livraison' },
+      { key: 'order_count', label: 'Nombre de Commandes' },
+      { key: 'total_spent_xof', label: 'Total Dépensé (FCFA)' },
+      { key: 'is_active', label: 'Statut du Compte' },
+      { key: 'created_at', label: 'Date d\'inscription' }
+    ];
+
+    const header = columns.map((c) => csvCell(c.label)).join(',');
+    const csvRows = rows.map((row: any) => columns.map((c) => csvCell(row[c.key])).join(','));
+    const csv = [header, ...csvRows].join('\n');
+
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="heritage-utilisateurs.csv"');
     res.send(`\ufeff${csv}`);
-  } catch {
+  } catch (err: any) {
+    console.error('Error in GET /api/admin/users/export.csv:', err);
     sendError(res, 503, 'L’export des utilisateurs est indisponible.');
   }
 });

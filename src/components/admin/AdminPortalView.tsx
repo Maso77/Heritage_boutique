@@ -34,6 +34,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
+  Phone,
   Plus,
   Printer,
   RefreshCw,
@@ -48,7 +49,10 @@ import {
   Truck,
   Upload,
   User,
+  UserCheck,
   UsersRound,
+  UserX,
+  ExternalLink,
   X
 } from 'lucide-react';
 import { adminRequest, AdminSession, downloadAdminCsv, getAdminSession, signOutAdministrator } from '../../lib/admin-api';
@@ -822,6 +826,10 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [productSort, setProductSort] = useState<'date_desc' | 'name_asc' | 'price_asc' | 'price_desc' | 'stock_asc' | 'stock_desc'>('date_desc');
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [userSearch, setUserSearch] = useState('');
+  const [userStatusFilter, setUserStatusFilter] = useState('');
+  const [userOrderFilter, setUserOrderFilter] = useState('');
+  const [userSort, setUserSort] = useState<'date_desc' | 'date_asc' | 'spent_desc' | 'orders_desc' | 'name_asc'>('date_desc');
+  const [selectedUserModal, setSelectedUserModal] = useState<AnyRecord | null>(null);
   const [orderSearch, setOrderSearch] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState('');
   const [orderDateFromFilter, setOrderDateFromFilter] = useState('');
@@ -984,10 +992,37 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
       return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
     });
   }, [orders, orderSearch, orderStatusFilter, orderDateFromFilter, orderDateToFilter, orderSort]);
-  const visibleUsers = useMemo(() => users.filter((user) => {
-    const query = userSearch.trim().toLocaleLowerCase('fr-FR');
-    return !query || [user.full_name, user.email, user.phone].some((value) => String(value || '').toLocaleLowerCase('fr-FR').includes(query));
-  }), [users, userSearch]);
+  const visibleUsers = useMemo(() => {
+    const filtered = users.filter((user) => {
+      const query = userSearch.trim().toLocaleLowerCase('fr-FR');
+      const matchesSearch =
+        !query ||
+        [user.full_name, user.email, user.phone, user.commune, user.delivery_address, user.shipping_address].some((value) =>
+          String(value || '').toLocaleLowerCase('fr-FR').includes(query)
+        );
+
+      const matchesStatus =
+        !userStatusFilter ||
+        (userStatusFilter === 'active' && user.is_active !== false) ||
+        (userStatusFilter === 'blocked' && user.is_active === false);
+
+      const orderCount = Number(user.order_count || 0);
+      const matchesOrderFilter =
+        !userOrderFilter ||
+        (userOrderFilter === 'with_orders' && orderCount > 0) ||
+        (userOrderFilter === 'no_orders' && orderCount === 0);
+
+      return matchesSearch && matchesStatus && matchesOrderFilter;
+    });
+
+    return filtered.sort((a, b) => {
+      if (userSort === 'date_asc') return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+      if (userSort === 'spent_desc') return Number(b.total_spent_xof || 0) - Number(a.total_spent_xof || 0);
+      if (userSort === 'orders_desc') return Number(b.order_count || 0) - Number(a.order_count || 0);
+      if (userSort === 'name_asc') return String(a.full_name || '').localeCompare(String(b.full_name || ''));
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
+  }, [users, userSearch, userStatusFilter, userOrderFilter, userSort]);
 
   const logout = async () => {
     await signOutAdministrator();
@@ -3534,10 +3569,509 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     );
   };
 
-  const renderUsers = () => <>
-    <PanelHeader eyebrow="Comptes clients" title="Utilisateurs" description="Consultez uniquement les coordonnées et l’historique commercial nécessaires à la relation client ; aucune donnée bancaire n’est exposée." action={<button type="button" onClick={() => void downloadAdminCsv('/users/export.csv', 'heritage-utilisateurs.csv').catch((error) => notify(error.message))} className="admin-secondary-button">Exporter CSV</button>} />
-    {users.length === 0 ? <EmptyState title="Aucun utilisateur enregistré" body="Les comptes visiteurs apparaîtront ici après leur inscription." /> : <><label className="mb-5 block max-w-sm text-xs font-semibold">Rechercher<input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Nom, e-mail ou téléphone…" className="admin-input mt-1" /></label><div className="divide-y divide-[#002141]/10 border border-[#002141]/15 bg-white">{visibleUsers.map((user) => <article key={user.id} className="flex flex-col gap-4 p-5"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold text-[#002141]">{user.full_name || 'Client HERITAGE'}</p><p className="mt-1 text-sm text-[#3A3A3A]">{user.email} {user.phone ? `· ${user.phone}` : ''}</p><p className="mt-1 text-xs text-[#3A3A3A]">Inscrit le {user.created_at ? new Date(user.created_at).toLocaleDateString('fr-FR') : '—'} · {user.order_count || 0} commande(s) · {formatXOF(user.total_spent_xof)}</p></div><button type="button" onClick={async () => { try { await adminRequest(`/users/${user.id}`, { method: 'PATCH', body: { is_active: !user.is_active } }); await loadTab('users'); notify(user.is_active ? 'Compte client désactivé.' : 'Compte client réactivé.'); } catch (error) { notify(error instanceof Error ? error.message : 'Action impossible.'); } }} className={user.is_active ? 'admin-secondary-button' : 'admin-primary-button'}>{user.is_active ? 'Désactiver' : 'Réactiver'}</button></div><details className="border-t border-[#002141]/10 pt-3"><summary className="cursor-pointer text-sm font-semibold text-[#002141]">Coordonnées et commandes</summary><div className="mt-3 grid gap-3 text-xs text-[#3A3A3A] sm:grid-cols-2"><p>Adresse : {user.delivery_address || user.commune || 'Non renseignée'}</p><p>Statut du compte : {user.is_active ? 'Actif' : 'Désactivé'}</p>{(user.orders || []).map((order: AnyRecord) => <button type="button" key={order.id} onClick={() => selectTab('orders')} className="text-left hover:text-[#AC854B]">{order.order_number || order.id} · {formatXOF(order.total_xof)} · {statusLabel[order.status] || order.status}</button>)}</div></details></article>)}</div>{visibleUsers.length === 0 && <EmptyState title="Aucun utilisateur trouvé" body="Modifiez votre recherche." />}</>}
-  </>;
+  const renderUsers = () => {
+    const totalUsersCount = users.length;
+    const activeUsersCount = users.filter((u) => u.is_active !== false).length;
+    const blockedUsersCount = users.filter((u) => u.is_active === false).length;
+    const aggregateRevenue = users.reduce((sum, u) => sum + Number(u.total_spent_xof || 0), 0);
+    const aggregateOrdersCount = users.reduce((sum, u) => sum + Number(u.order_count || 0), 0);
+
+    const toggleUserStatus = async (userToUpdate: AnyRecord) => {
+      const nextStatus = userToUpdate.is_active === false;
+      const actionText = nextStatus ? 'réactiver' : 'bloquer';
+      if (!window.confirm(`Voulez-vous vraiment ${actionText} le compte client de ${userToUpdate.full_name || userToUpdate.email} ?`)) {
+        return;
+      }
+
+      try {
+        const updated = await adminRequest<AnyRecord>(`/users/${userToUpdate.id}`, {
+          method: 'PATCH',
+          body: { is_active: nextStatus }
+        });
+        await loadTab('users');
+        if (selectedUserModal && selectedUserModal.id === userToUpdate.id) {
+          setSelectedUserModal((prev) => (prev ? { ...prev, is_active: nextStatus } : null));
+        }
+        notify(nextStatus ? 'Compte client réactivé avec succès.' : 'Compte client bloqué et accès révoqué.');
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'Action sur le compte impossible.');
+      }
+    };
+
+    return (
+      <>
+        <PanelHeader
+          eyebrow="Relation Client & Sécurité"
+          title="Utilisateurs & Fiches Clients"
+          description="Consultez les coordonnées clients, gérez les adresses de livraison enregistrées, visualisez l'historique d'achats complet et bloquez ou réactivez des accès en toute sécurité. Aucune donnée bancaire n'est exposée."
+          action={
+            <button
+              type="button"
+              onClick={() => void downloadAdminCsv('/users/export.csv', 'heritage-utilisateurs.csv').catch((error) => notify(error.message))}
+              className="admin-secondary-button flex items-center gap-2"
+            >
+              <FileText className="h-4 w-4" /> Exporter CSV
+            </button>
+          }
+        />
+
+        {/* Aggregate Stats Cards */}
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="border border-[#002141]/15 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#3A3A3A]">Total Clients</span>
+              <UsersRound className="h-5 w-5 text-[#AC854B]" />
+            </div>
+            <p className="mt-2 text-2xl font-bold text-[#002141]">{totalUsersCount}</p>
+            <p className="mt-1 text-[11px] text-[#3A3A3A]">{activeUsersCount} actifs · {blockedUsersCount} bloqués</p>
+          </div>
+
+          <div className="border border-[#002141]/15 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#3A3A3A]">Comptes Actifs</span>
+              <UserCheck className="h-5 w-5 text-emerald-600" />
+            </div>
+            <p className="mt-2 text-2xl font-bold text-[#002141]">{activeUsersCount}</p>
+            <p className="mt-1 text-[11px] text-emerald-700">Accès au portail client autorisés</p>
+          </div>
+
+          <div className="border border-[#002141]/15 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#3A3A3A]">Commandes Effectuées</span>
+              <ClipboardList className="h-5 w-5 text-[#002141]" />
+            </div>
+            <p className="mt-2 text-2xl font-bold text-[#002141]">{aggregateOrdersCount}</p>
+            <p className="mt-1 text-[11px] text-[#3A3A3A]">Commandes cumulées des clients</p>
+          </div>
+
+          <div className="border border-[#002141]/15 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#3A3A3A]">Volume d'Achats</span>
+              <CreditCard className="h-5 w-5 text-[#AC854B]" />
+            </div>
+            <p className="mt-2 text-xl font-bold text-[#002141]">{formatXOF(aggregateRevenue)}</p>
+            <p className="mt-1 text-[11px] text-[#3A3A3A]">Chiffre d'affaires clients inscrit</p>
+          </div>
+        </div>
+
+        {/* Filter and Search Bar */}
+        <div className="mb-6 border border-[#002141]/15 bg-white p-4">
+          <div className="grid gap-3 md:grid-cols-4">
+            <div>
+              <label className="block text-xs font-semibold text-[#002141] mb-1">Recherche globale</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-[#3A3A3A]/60" />
+                <input
+                  type="text"
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  placeholder="Nom, email, téléphone, adresse…"
+                  className="admin-input pl-9"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#002141] mb-1">Statut du compte</label>
+              <select
+                value={userStatusFilter}
+                onChange={(e) => setUserStatusFilter(e.target.value)}
+                className="admin-input"
+              >
+                <option value="">Tous les statuts</option>
+                <option value="active">Comptes Actifs uniquement</option>
+                <option value="blocked">Comptes Bloqués / Désactivés</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#002141] mb-1">Activité d'achat</label>
+              <select
+                value={userOrderFilter}
+                onChange={(e) => setUserOrderFilter(e.target.value)}
+                className="admin-input"
+              >
+                <option value="">Tous les clients</option>
+                <option value="with_orders">Avec au moins 1 commande</option>
+                <option value="no_orders">Sans commande (Prospects)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#002141] mb-1">Trier par</label>
+              <select
+                value={userSort}
+                onChange={(e) => setUserSort(e.target.value as any)}
+                className="admin-input"
+              >
+                <option value="date_desc">Inscription (Plus récents)</option>
+                <option value="date_asc">Inscription (Plus anciens)</option>
+                <option value="spent_desc">Total dépensé (Décroissant)</option>
+                <option value="orders_desc">Nombre de commandes</option>
+                <option value="name_asc">Nom alphabétique (A-Z)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Main Directory Table */}
+        {users.length === 0 ? (
+          <EmptyState
+            title="Aucun utilisateur enregistré"
+            body="Les comptes des clients apparaîtront automatiquement ici après leur première inscription sur le site."
+          />
+        ) : visibleUsers.length === 0 ? (
+          <EmptyState
+            title="Aucun client ne correspond aux critères"
+            body="Essayez de modifier votre mot-clé de recherche ou de réinitialiser vos filtres."
+          />
+        ) : (
+          <div className="overflow-x-auto border border-[#002141]/15 bg-white shadow-sm">
+            <table className="w-full text-left text-xs">
+              <thead className="border-b border-[#002141]/15 bg-[#F5F3EF] text-[11px] font-bold uppercase tracking-wider text-[#002141]">
+                <tr>
+                  <th className="p-3.5">Client & Contact</th>
+                  <th className="p-3.5">Statut</th>
+                  <th className="p-3.5">Adresse / Commune</th>
+                  <th className="p-3.5">Commandes & Dépenses</th>
+                  <th className="p-3.5">Inscription</th>
+                  <th className="p-3.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#002141]/10 text-[#3A3A3A]">
+                {visibleUsers.map((client) => {
+                  const isBlocked = client.is_active === false;
+                  const initials = (client.full_name || client.email || 'CL')
+                    .split(' ')
+                    .map((part: string) => part[0])
+                    .join('')
+                    .toUpperCase()
+                    .slice(0, 2);
+
+                  return (
+                    <tr key={client.id} className="hover:bg-[#FAF9F7]/80 transition-colors">
+                      <td className="p-3.5">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#002141] text-[11px] font-bold text-[#D6BB8F]">
+                            {initials}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-[#002141] text-sm">{client.full_name || 'Client sans nom'}</p>
+                            <p className="text-[11px] text-[#3A3A3A] flex items-center gap-1">
+                              <Mail className="h-3 w-3 inline text-gray-500" /> {client.email}
+                            </p>
+                            {client.phone && (
+                              <p className="text-[11px] text-[#3A3A3A] flex items-center gap-1">
+                                <Phone className="h-3 w-3 inline text-gray-500" /> {client.phone}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="p-3.5 whitespace-nowrap">
+                        {isBlocked ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-[11px] font-bold text-red-800 border border-red-200">
+                            <UserX className="h-3 w-3" /> Bloqué
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800 border border-emerald-200">
+                            <UserCheck className="h-3 w-3" /> Actif
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="p-3.5 max-w-xs truncate">
+                        <p className="font-semibold text-[#002141]">{client.commune || 'Abidjan'}</p>
+                        <p className="text-[11px] text-[#3A3A3A] truncate" title={client.delivery_address || client.shipping_address}>
+                          {client.delivery_address || client.shipping_address || 'Aucune adresse renseignée'}
+                        </p>
+                      </td>
+
+                      <td className="p-3.5 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center rounded bg-[#002141]/10 px-2 py-0.5 text-[11px] font-bold text-[#002141]">
+                            {client.order_count || 0} cmd(s)
+                          </span>
+                          <span className="font-bold text-[#002141]">{formatXOF(client.total_spent_xof)}</span>
+                        </div>
+                      </td>
+
+                      <td className="p-3.5 whitespace-nowrap text-[11px]">
+                        {client.created_at ? new Date(client.created_at).toLocaleDateString('fr-FR') : '—'}
+                      </td>
+
+                      <td className="p-3.5 text-right whitespace-nowrap">
+                        <div className="flex justify-end items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedUserModal(client)}
+                            className="admin-secondary-button py-1 px-2.5 text-xs flex items-center gap-1"
+                            title="Voir la fiche client détaillée"
+                          >
+                            <Eye className="h-3.5 w-3.5" /> Fiche Client
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void toggleUserStatus(client)}
+                            className={
+                              isBlocked
+                                ? 'admin-primary-button py-1 px-2.5 text-xs flex items-center gap-1'
+                                : 'admin-icon-button text-red-700 hover:bg-red-50 p-1.5 border border-red-200'
+                            }
+                            title={isBlocked ? 'Réactiver le compte' : 'Bloquer le compte client'}
+                          >
+                            {isBlocked ? (
+                              <>
+                                <ShieldCheck className="h-3.5 w-3.5" /> Réactiver
+                              </>
+                            ) : (
+                              <ShieldAlert className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Fiche Client Modal Overlay */}
+        {selectedUserModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#002141]/60 p-4 backdrop-blur-sm overflow-y-auto">
+            <div className="relative w-full max-w-3xl border border-[#002141]/20 bg-white shadow-2xl my-8">
+              {/* Modal Top Header */}
+              <div className="flex items-center justify-between border-b border-[#002141]/15 bg-[#002141] p-5 text-white">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#AC854B] text-[#002141] font-bold text-base">
+                    {(selectedUserModal.full_name || selectedUserModal.email || 'CL')
+                      .split(' ')
+                      .map((p: string) => p[0])
+                      .join('')
+                      .toUpperCase()
+                      .slice(0, 2)}
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold">{selectedUserModal.full_name || 'Client HERITAGE'}</h2>
+                    <p className="text-xs text-[#D6BB8F] flex items-center gap-2">
+                      <span>Rôle : Client</span>
+                      <span>·</span>
+                      <span className="font-mono text-[11px] opacity-80">ID: {selectedUserModal.id}</span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {selectedUserModal.is_active === false ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-red-900/80 px-3 py-1 text-xs font-bold text-red-200 border border-red-700">
+                      <UserX className="h-3.5 w-3.5" /> Compte Bloqué
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-900/80 px-3 py-1 text-xs font-bold text-emerald-200 border border-emerald-700">
+                      <UserCheck className="h-3.5 w-3.5" /> Compte Actif
+                    </span>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedUserModal(null)}
+                    className="p-1 text-gray-300 hover:text-white transition-colors"
+                    aria-label="Fermer la fiche client"
+                  >
+                    <X className="h-6 w-6" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+                {/* Account Action Banner */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 border border-[#002141]/15 bg-[#F5F3EF]">
+                  <div>
+                    <p className="font-bold text-sm text-[#002141]">Gestion de l'accès du compte</p>
+                    <p className="text-xs text-[#3A3A3A] mt-0.5">
+                      {selectedUserModal.is_active === false
+                        ? "Le compte est actuellement suspendu. Le client ne peut plus se connecter ni passer de commande."
+                        : "Le compte est actif. Vous pouvez le suspendre immédiatement à tout moment."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void toggleUserStatus(selectedUserModal)}
+                    className={
+                      selectedUserModal.is_active === false
+                        ? 'admin-primary-button whitespace-nowrap'
+                        : 'bg-red-800 text-white hover:bg-red-900 px-4 py-2 text-xs font-bold transition-colors whitespace-nowrap'
+                    }
+                  >
+                    {selectedUserModal.is_active === false ? 'Réactiver le compte client' : 'Bloquer le compte client'}
+                  </button>
+                </div>
+
+                {/* Section 1: Contact Details & Address */}
+                <div className="grid gap-6 md:grid-cols-2">
+                  <div className="border border-[#002141]/15 p-4 bg-white">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#002141] mb-3 flex items-center gap-1.5 border-b border-[#002141]/10 pb-2">
+                      <User className="h-4 w-4 text-[#AC854B]" /> Coordonnées du Client
+                    </h3>
+                    <dl className="space-y-2 text-xs">
+                      <div>
+                        <dt className="text-gray-500 font-semibold">Nom complet :</dt>
+                        <dd className="text-[#002141] font-semibold">{selectedUserModal.full_name || 'Non renseigné'}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-gray-500 font-semibold">E-mail :</dt>
+                        <dd className="text-[#002141]">
+                          <a href={`mailto:${selectedUserModal.email}`} className="underline hover:text-[#AC854B]">
+                            {selectedUserModal.email}
+                          </a>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-gray-500 font-semibold">Téléphone :</dt>
+                        <dd className="text-[#002141]">
+                          {selectedUserModal.phone ? (
+                            <a href={`tel:${selectedUserModal.phone}`} className="underline hover:text-[#AC854B]">
+                              {selectedUserModal.phone}
+                            </a>
+                          ) : (
+                            'Non renseigné'
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-gray-500 font-semibold">Membre depuis le :</dt>
+                        <dd className="text-[#002141]">
+                          {selectedUserModal.created_at ? new Date(selectedUserModal.created_at).toLocaleString('fr-FR') : '—'}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+
+                  <div className="border border-[#002141]/15 p-4 bg-white">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#002141] mb-3 flex items-center gap-1.5 border-b border-[#002141]/10 pb-2">
+                      <MapPin className="h-4 w-4 text-[#AC854B]" /> Adresses Enregistrées
+                    </h3>
+                    <dl className="space-y-2 text-xs">
+                      <div>
+                        <dt className="text-gray-500 font-semibold">Commune / Ville :</dt>
+                        <dd className="text-[#002141] font-semibold">{selectedUserModal.commune || 'Abidjan (Défaut)'}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-gray-500 font-semibold">Adresse de livraison :</dt>
+                        <dd className="text-[#002141] leading-relaxed">
+                          {selectedUserModal.delivery_address || selectedUserModal.shipping_address || 'Aucune adresse enregistrée.'}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+                </div>
+
+                {/* Section 2: Summary Metrics */}
+                <div className="grid gap-4 sm:grid-cols-3 bg-[#F5F3EF] p-4 border border-[#002141]/15 text-center">
+                  <div>
+                    <span className="text-[11px] font-semibold text-[#3A3A3A] uppercase tracking-wider">Commandes Totales</span>
+                    <p className="text-xl font-bold text-[#002141] mt-1">{selectedUserModal.order_count || 0}</p>
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-semibold text-[#3A3A3A] uppercase tracking-wider">Cumul Dépensé</span>
+                    <p className="text-xl font-bold text-[#002141] mt-1">{formatXOF(selectedUserModal.total_spent_xof)}</p>
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-semibold text-[#3A3A3A] uppercase tracking-wider">Panier Moyen</span>
+                    <p className="text-xl font-bold text-[#AC854B] mt-1">
+                      {selectedUserModal.order_count > 0
+                        ? formatXOF(Math.round(Number(selectedUserModal.total_spent_xof || 0) / Number(selectedUserModal.order_count)))
+                        : '0 FCFA'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Section 3: Order History */}
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#002141] mb-3 flex items-center justify-between border-b border-[#002141]/10 pb-2">
+                    <span className="flex items-center gap-1.5">
+                      <ClipboardList className="h-4 w-4 text-[#AC854B]" /> Historique des Commandes
+                    </span>
+                    <span className="text-[11px] font-normal text-gray-500">
+                      {(selectedUserModal.orders || []).length} commande(s) répertoriée(s)
+                    </span>
+                  </h3>
+
+                  {(!selectedUserModal.orders || selectedUserModal.orders.length === 0) ? (
+                    <p className="text-xs text-[#3A3A3A] italic py-4 text-center border border-dashed border-[#002141]/15">
+                      Ce client n'a pas encore passé de commande sur le site.
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto border border-[#002141]/15">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-[#F5F3EF] border-b border-[#002141]/15 text-[10px] uppercase font-bold text-[#002141]">
+                          <tr>
+                            <th className="p-2.5">N° Commande</th>
+                            <th className="p-2.5">Date</th>
+                            <th className="p-2.5">Statut</th>
+                            <th className="p-2.5">Montant</th>
+                            <th className="p-2.5 text-right">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#002141]/10 text-[#3A3A3A]">
+                          {selectedUserModal.orders.map((ord: AnyRecord) => (
+                            <tr key={ord.id} className="hover:bg-gray-50">
+                              <td className="p-2.5 font-bold text-[#002141]">
+                                {ord.order_number || ord.id.slice(0, 8)}
+                              </td>
+                              <td className="p-2.5 text-[11px]">
+                                {ord.created_at ? new Date(ord.created_at).toLocaleDateString('fr-FR') : '—'}
+                              </td>
+                              <td className="p-2.5 whitespace-nowrap">
+                                <span className="admin-pill text-[10px]">
+                                  {statusLabel[ord.status] || ord.status}
+                                </span>
+                              </td>
+                              <td className="p-2.5 font-semibold text-[#002141]">
+                                {formatXOF(ord.total_xof)}
+                              </td>
+                              <td className="p-2.5 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedUserModal(null);
+                                    selectTab('orders');
+                                    setSelectedOrder(ord);
+                                  }}
+                                  className="text-[11px] font-bold text-[#AC854B] hover:underline flex items-center gap-1 justify-end ml-auto"
+                                >
+                                  Voir détail <ExternalLink className="h-3 w-3 inline" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="border-t border-[#002141]/15 bg-[#F5F3EF] p-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setSelectedUserModal(null)}
+                  className="admin-secondary-button"
+                >
+                  Fermer la fiche
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  };
 
   const renderMedia = () => <><PanelHeader eyebrow="Fichiers de la boutique" title="Galerie média" description="Ajoutez plusieurs images, renseignez leur texte alternatif, puis organisez-les par dossier ou tag. Les images générées par IA sont refusées." action={<label className="admin-primary-button cursor-pointer"><Plus className="h-4 w-4" /> Ajouter des images<input type="file" multiple accept="image/jpeg,image/png,image/webp,image/avif" className="sr-only" onChange={uploadMedia} /></label>} />{media.length === 0 ? <EmptyState title="La galerie est vide" body="Ajoutez la première image produit depuis votre appareil." /> : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{media.map((asset) => <article key={asset.id} className="overflow-hidden border border-[#002141]/15 bg-white"><img src={asset.public_url} alt={asset.alt_text || asset.file_name} className="h-44 w-full object-cover" /><div className="space-y-3 p-4"><div><p className="truncate text-sm font-semibold text-[#002141]">{asset.file_name}</p><p className="mt-1 truncate text-xs text-[#3A3A3A]">{asset.folder || 'general'} · {asset.alt_text}</p>{asset.usage?.length > 0 && <p className="mt-1 text-[11px] text-[#AC854B]">Utilisée : {asset.usage.map((usage: AnyRecord) => `${usage.type} ${usage.label}`).join(', ')}</p>}</div><div className="flex justify-end gap-2"><button type="button" onClick={async () => { const alt_text = window.prompt('Texte alternatif :', asset.alt_text || ''); if (!alt_text?.trim()) return; const folder = window.prompt('Dossier :', asset.folder || 'general') || 'general'; const tags = window.prompt('Tags séparés par des virgules :', Array.isArray(asset.tags) ? asset.tags.join(', ') : ''); try { await adminRequest(`/media/${asset.id}`, { method: 'PATCH', body: { alt_text: alt_text.trim(), folder, tags: JSON.stringify((tags || '').split(',').map((tag) => tag.trim()).filter(Boolean)), product_id: asset.product_id || null, sort_order: asset.sort_order || 0 } }); await loadTab('media'); notify('Média mis à jour.'); } catch (error) { notify(error instanceof Error ? error.message : 'Mise à jour impossible.'); } }} className="admin-icon-button" aria-label="Modifier le média"><Pencil className="h-4 w-4" /></button><button type="button" onClick={async () => { if (!window.confirm(asset.usage?.length ? 'Cette image est utilisée. La suppression sera refusée tant qu’elle est liée à un contenu. Continuer ?' : 'Supprimer cette image définitivement ?')) return; try { await adminRequest(`/media/${asset.id}`, { method: 'DELETE' }); await loadTab('media'); notify('Image supprimée.'); } catch (error) { notify(error instanceof Error ? error.message : 'Suppression impossible.'); } }} className="admin-icon-button text-red-800" aria-label="Supprimer l’image"><Trash2 className="h-4 w-4" /></button></div></div></article>)}</div>}</>;
 
