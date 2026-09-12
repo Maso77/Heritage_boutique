@@ -13,6 +13,7 @@ import {
   ChevronDown,
   ClipboardList,
   Clock,
+  Copy,
   CreditCard,
   Eye,
   FileCheck,
@@ -3180,7 +3181,358 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     );
   };
 
-  const renderAdministrators = () => <><PanelHeader eyebrow="Accès sécurisé" title="Administrateurs" description="Gérez les comptes actifs et créez des codes à usage unique, valides pendant une heure." action={<button type="button" onClick={() => void generateInvitation()} className="admin-primary-button"><KeyRound className="h-4 w-4" /> Générer un code</button>} />{generatedCode && <div className="mb-6 border border-[#AC854B] bg-[#fffaf0] p-5"><p className="text-sm font-semibold text-[#002141]">Code d’invitation à transmettre une seule fois</p><code className="mt-3 block select-all break-all bg-[#002141] p-4 text-lg font-bold tracking-[0.12em] text-[#D6BB8F]">{generatedCode}</code><p className="mt-3 text-xs text-[#3A3A3A]">Il expirera dans une heure. Conservez-le hors des canaux publics.</p></div>}<div className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]"><section className="border border-[#002141]/15 bg-white"><h2 className="border-b border-[#002141]/10 p-5 font-playfair text-2xl font-semibold">Comptes administrateur</h2>{administrators.map((account) => <article key={account.id} className="flex items-center justify-between gap-4 border-b border-[#002141]/10 p-5"><div><p className="font-semibold">{account.full_name || 'Administrateur'} · {account.is_active ? 'Actif' : 'Révoqué'}</p><p className="text-sm text-[#3A3A3A]">{account.email}</p><p className="mt-1 text-xs text-[#3A3A3A]">Créé le {account.created_at ? new Date(account.created_at).toLocaleDateString('fr-FR') : '—'} · Dernière connexion : {account.last_signed_in_at ? new Date(account.last_signed_in_at).toLocaleString('fr-FR') : 'Jamais'}</p></div><button type="button" onClick={async () => { try { await adminRequest(`/administrators/${account.id}`, { method: 'PATCH', body: { is_active: !account.is_active } }); await loadTab('administrators'); notify(account.is_active ? 'Compte désactivé.' : 'Compte réactivé.'); } catch (error) { notify(error instanceof Error ? error.message : 'Action impossible.'); } }} className={account.is_active ? 'admin-secondary-button' : 'admin-primary-button'}>{account.is_active ? 'Désactiver' : 'Réactiver'}</button></article>)}</section><section className="border border-[#002141]/15 bg-white"><h2 className="border-b border-[#002141]/10 p-5 font-playfair text-2xl font-semibold">Codes récents</h2>{invitations.length === 0 ? <p className="p-5 text-sm text-[#3A3A3A]">Aucun code créé.</p> : invitations.map((invitation) => <article key={invitation.id} className="flex items-center justify-between gap-3 border-b border-[#002141]/10 p-5"><div><p className="text-sm font-semibold">{invitation.used_at ? 'Utilisé' : invitation.revoked_at ? 'Révoqué' : new Date(invitation.expires_at) > new Date() ? 'Valide' : 'Expiré'}</p><p className="mt-1 text-xs text-[#3A3A3A]">Expire le {new Date(invitation.expires_at).toLocaleString('fr-FR')}</p></div>{!invitation.used_at && !invitation.revoked_at && new Date(invitation.expires_at) > new Date() && <button type="button" onClick={async () => { await adminRequest(`/invitations/${invitation.id}/revoke`, { method: 'PATCH' }); await loadTab('administrators'); notify('Code révoqué.'); }} className="admin-icon-button text-red-800" aria-label="Révoquer"><Trash2 className="h-4 w-4" /></button>}</article>)}</section></div>{auditLogs.length > 0 && <section className="mt-6 border border-[#002141]/15 bg-white"><h2 className="border-b border-[#002141]/10 p-5 font-playfair text-2xl font-semibold">Journal d’activité récent</h2><div className="divide-y divide-[#002141]/10">{auditLogs.map((entry) => <p key={entry.id} className="p-4 text-sm text-[#3A3A3A]">{entry.created_at ? new Date(entry.created_at).toLocaleString('fr-FR') : '—'} · {entry.action} · {entry.entity_type}</p>)}</div></section>}</>;
+  const getAuditActionBadge = (action: string, entityType: string) => {
+    const map: Record<string, { label: string; style: string }> = {
+      created: { label: 'Création', style: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+      created_product: { label: 'Création Produit', style: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+      updated: { label: 'Modification', style: 'bg-blue-50 text-blue-800 border-blue-200' },
+      updated_product: { label: 'Modification Produit', style: 'bg-blue-50 text-blue-800 border-blue-200' },
+      updated_status: { label: 'Statut Commande', style: 'bg-amber-50 text-amber-800 border-amber-200' },
+      updated_order_status: { label: 'Statut Commande', style: 'bg-amber-50 text-amber-800 border-amber-200' },
+      deleted: { label: 'Suppression', style: 'bg-red-50 text-red-800 border-red-200' },
+      deleted_product: { label: 'Suppression Produit', style: 'bg-red-50 text-red-800 border-red-200' },
+      revoked: { label: 'Révocation', style: 'bg-red-50 text-red-800 border-red-200' },
+      revoked_admin: { label: 'Révocation Admin', style: 'bg-red-50 text-red-800 border-red-200' },
+      reactivated_admin: { label: 'Réactivation Admin', style: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+      generated: { label: 'Code Généré', style: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+      generated_code: { label: 'Code Généré', style: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+      revoked_code: { label: 'Code Révoqué', style: 'bg-red-50 text-red-800 border-red-200' },
+      stock_movement: { label: 'Ajustement Stock', style: 'bg-purple-50 text-purple-800 border-purple-200' },
+      toggled_user_status: { label: 'Compte Client', style: 'bg-slate-50 text-slate-800 border-slate-200' }
+    };
+
+    const found = map[action] || map[`${action}_${entityType}`];
+    if (found) return found;
+
+    const entityLabels: Record<string, string> = {
+      product: 'Produit',
+      order: 'Commande',
+      administrator: 'Admin',
+      admin_invitation: 'Code d’invitation',
+      user: 'Client',
+      customer: 'Client'
+    };
+
+    return {
+      label: `${action} (${entityLabels[entityType] || entityType})`,
+      style: 'bg-gray-50 text-gray-800 border-gray-200'
+    };
+  };
+
+  const renderAdministrators = () => {
+    const currentAdminId = adminSession?.profile?.id;
+
+    return (
+      <>
+        <PanelHeader
+          eyebrow="Accès & Sécurité"
+          title="Gestion des Administrateurs"
+          description="Consultez la liste des comptes autorisés, révoquez des accès en temps réel, gérez les codes d'invitation temporaires et suivez le journal d'activité."
+          action={
+            <button
+              type="button"
+              onClick={() => void generateInvitation()}
+              className="admin-primary-button flex items-center gap-2"
+            >
+              <KeyRound className="h-4 w-4" /> Générer un code temporaire (1h)
+            </button>
+          }
+        />
+
+        {/* NOUVEAU CODE GÉNÉRÉ */}
+        {generatedCode && (
+          <div className="mb-6 border-2 border-[#AC854B] bg-[#FFFAF0] p-6 shadow-md rounded-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-bold text-[#002141]">
+                  <KeyRound className="h-4 w-4 text-[#AC854B]" />
+                  <span>Code d’invitation temporaire généré</span>
+                  <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 border border-amber-300">
+                    Valide 1 Heure
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-[#3A3A3A]">
+                  Ce code permet de créer un nouveau compte administrateur. Transmettez-le de façon sécurisée à votre collaborateur.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(generatedCode);
+                  notify('Code copié dans le presse-papiers !');
+                }}
+                className="admin-primary-button text-xs shrink-0 flex items-center gap-1.5"
+              >
+                <Copy className="h-3.5 w-3.5" /> Copier le code
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <code className="block flex-1 select-all rounded-sm bg-[#002141] px-5 py-3.5 text-xl font-bold tracking-[0.15em] text-[#D6BB8F] font-mono border border-[#002141]">
+                {generatedCode}
+              </code>
+              <div className="text-xs text-[#002141]/80 font-medium bg-amber-50 border border-amber-200 px-4 py-3 rounded-sm">
+                ⏱ Expiration : <strong>{new Date(Date.now() + 60 * 60 * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</strong> (dans 60 min)
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* GRILLE : COMPTES ADMINS & CODES DE TEMPO */}
+        <div className="grid gap-6 xl:grid-cols-[1.3fr_0.9fr]">
+          {/* LISTE DES COMPTES ADMINISTRATEURS */}
+          <section className="border border-[#002141]/15 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-[#002141]/10 p-5 bg-[#FAF9F7]">
+              <div>
+                <h2 className="font-playfair text-xl font-bold text-[#002141]">Comptes Administrateurs</h2>
+                <p className="text-xs text-[#3A3A3A] mt-0.5">Accès actuels à la console de gestion</p>
+              </div>
+              <span className="rounded-full bg-[#002141]/10 px-3 py-1 text-xs font-bold text-[#002141]">
+                {administrators.length} compte(s)
+              </span>
+            </div>
+
+            <div className="divide-y divide-[#002141]/10">
+              {administrators.map((account) => {
+                const isSelf = account.id === currentAdminId;
+                return (
+                  <article key={account.id} className="p-5 hover:bg-[#FAF9F7]/50 transition-colors">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-sm text-[#002141]">
+                            {account.full_name || 'Administrateur'}
+                          </span>
+                          {isSelf && (
+                            <span className="inline-flex items-center rounded bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-800">
+                              Vous
+                            </span>
+                          )}
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold border ${
+                              account.is_active
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                : 'bg-red-50 text-red-800 border-red-200'
+                            }`}
+                          >
+                            <span className={`h-1.5 w-1.5 rounded-full ${account.is_active ? 'bg-emerald-600' : 'bg-red-600'}`} />
+                            {account.is_active ? 'Actif' : 'Accès Révoqué'}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-[#3A3A3A] font-medium">{account.email}</p>
+
+                        <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-[#3A3A3A]/80">
+                          <div>
+                            <strong>Rôle :</strong> {account.role === 'admin' ? 'Administrateur' : account.role || 'Administrateur'}
+                          </div>
+                          <div>
+                            <strong>Créé le :</strong> {account.created_at ? new Date(account.created_at).toLocaleDateString('fr-FR') : '—'}
+                          </div>
+                          <div className="sm:col-span-2">
+                            <strong>Dernière connexion :</strong>{' '}
+                            {account.last_signed_in_at
+                              ? new Date(account.last_signed_in_at).toLocaleString('fr-FR')
+                              : 'Jamais enregistré'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ACTION : RÉVOCATION IMMÉDIATE DE L'ACCÈS */}
+                      <div className="shrink-0 pt-2 sm:pt-0">
+                        {isSelf ? (
+                          <span className="text-xs italic text-gray-500 font-medium">Session actuelle</span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const actionName = account.is_active ? 'révoquer l’accès de' : 'réactiver';
+                              if (
+                                !window.confirm(
+                                  `Êtes-vous sûr de vouloir ${actionName} ${account.full_name || account.email} ? ${
+                                    account.is_active ? 'Sa session en cours sera immédiatement coupée.' : ''
+                                  }`
+                                )
+                              ) {
+                                return;
+                              }
+                              try {
+                                await adminRequest(`/administrators/${account.id}`, {
+                                  method: 'PATCH',
+                                  body: { is_active: !account.is_active }
+                                });
+                                await loadTab('administrators');
+                                notify(account.is_active ? 'Accès admin révoqué (session coupée).' : 'Accès admin réactivé.');
+                              } catch (error) {
+                                notify(error instanceof Error ? error.message : 'Action impossible.');
+                              }
+                            }}
+                            className={
+                              account.is_active
+                                ? 'px-3 py-1.5 rounded-sm bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 text-xs font-semibold flex items-center gap-1.5 transition-colors'
+                                : 'px-3 py-1.5 rounded-sm bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold flex items-center gap-1.5 transition-colors'
+                            }
+                          >
+                            {account.is_active ? (
+                              <>
+                                <ShieldAlert className="h-3.5 w-3.5" /> Révoquer l'accès
+                              </>
+                            ) : (
+                              <>
+                                <ShieldCheck className="h-3.5 w-3.5" /> Réactiver l'accès
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* HISTORIQUE ET GESTION DES CODES D'INVITATION */}
+          <section className="border border-[#002141]/15 bg-white shadow-sm flex flex-col">
+            <div className="border-b border-[#002141]/10 p-5 bg-[#FAF9F7]">
+              <h2 className="font-playfair text-xl font-bold text-[#002141]">Codes temporaires</h2>
+              <p className="text-xs text-[#3A3A3A] mt-0.5">Invitations générées pour création de compte admin (Valides 1h)</p>
+            </div>
+
+            {invitations.length === 0 ? (
+              <p className="p-6 text-sm text-[#3A3A3A] italic text-center">Aucun code d'invitation généré.</p>
+            ) : (
+              <div className="divide-y divide-[#002141]/10 flex-1">
+                {invitations.map((invitation) => {
+                  const isExpired = new Date(invitation.expires_at) <= new Date();
+                  const isUsed = Boolean(invitation.used_at);
+                  const isRevoked = Boolean(invitation.revoked_at);
+                  const isValid = !isUsed && !isRevoked && !isExpired;
+
+                  return (
+                    <article key={invitation.id} className="p-4 flex items-center justify-between gap-3 hover:bg-[#FAF9F7]/50 transition-colors">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold border ${
+                              isValid
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                : isUsed
+                                ? 'bg-gray-100 text-gray-700 border-gray-300'
+                                : isRevoked
+                                ? 'bg-red-50 text-red-800 border-red-200'
+                                : 'bg-amber-50 text-amber-800 border-amber-200'
+                            }`}
+                          >
+                            {isValid && 'Valide (1h)'}
+                            {isUsed && 'Utilisé'}
+                            {isRevoked && 'Révoqué'}
+                            {isExpired && !isUsed && !isRevoked && 'Expiré'}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-[#3A3A3A]">
+                          <strong>Créé le :</strong> {invitation.created_at ? new Date(invitation.created_at).toLocaleString('fr-FR') : '—'}
+                        </p>
+                        <p className="text-xs text-[#3A3A3A]">
+                          <strong>Expire le :</strong> {new Date(invitation.expires_at).toLocaleString('fr-FR')}
+                        </p>
+                      </div>
+
+                      {/* Révocation d'un code non utilisé */}
+                      {isValid && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!window.confirm('Voulez-vous révoquer ce code temporaire avant son utilisation ?')) return;
+                            try {
+                              await adminRequest(`/invitations/${invitation.id}/revoke`, { method: 'PATCH' });
+                              await loadTab('administrators');
+                              notify('Code temporaire révoqué avec succès.');
+                            } catch (err: any) {
+                              notify(err.message || 'Impossible de révoquer ce code.');
+                            }
+                          }}
+                          className="px-2.5 py-1 rounded-sm bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 text-xs font-semibold flex items-center gap-1 shrink-0 transition-colors"
+                          title="Révoquer ce code non utilisé"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Révoquer
+                        </button>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+
+        {/* JOURNAL D'ACTIVITÉ RÉCENT (AUDIT LOGS) */}
+        <section className="mt-8 border border-[#002141]/15 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-[#002141]/10 p-5 bg-[#FAF9F7]">
+            <div>
+              <h2 className="font-playfair text-xl font-bold text-[#002141]">Journal d’Activité (Audit)</h2>
+              <p className="text-xs text-[#3A3A3A] mt-0.5">Traçabilité complète des actions sensibles effectuées sur le portail</p>
+            </div>
+            <span className="rounded-full bg-[#002141]/10 px-3 py-1 text-xs font-bold text-[#002141]">
+              {auditLogs.length} action(s) récente(s)
+            </span>
+          </div>
+
+          {auditLogs.length === 0 ? (
+            <p className="p-6 text-sm text-[#3A3A3A] italic text-center">Aucune action enregistrée dans le journal.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-[#002141]/10 bg-[#FAF9F7] text-[#002141] font-bold uppercase tracking-wider">
+                    <th className="p-3.5">Quand</th>
+                    <th className="p-3.5">Administrateur (Qui)</th>
+                    <th className="p-3.5">Action (Quoi)</th>
+                    <th className="p-3.5">Entité & Détails</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#002141]/10">
+                  {auditLogs.map((entry) => {
+                    const actionInfo = getAuditActionBadge(entry.action, entry.entity_type);
+                    const detailsStr = entry.details ? JSON.stringify(entry.details) : '';
+
+                    return (
+                      <tr key={entry.id} className="hover:bg-[#FAF9F7]/60 transition-colors">
+                        <td className="p-3.5 font-medium whitespace-nowrap text-[#002141]">
+                          {entry.created_at ? new Date(entry.created_at).toLocaleString('fr-FR') : '—'}
+                        </td>
+                        <td className="p-3.5 font-semibold text-[#002141]">
+                          {entry.actor_name || 'Administrateur'}
+                          {entry.actor_email && <span className="block text-[11px] font-normal text-[#3A3A3A]">{entry.actor_email}</span>}
+                        </td>
+                        <td className="p-3.5 whitespace-nowrap">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${actionInfo.style}`}>
+                            {actionInfo.label}
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-[#3A3A3A] max-w-xs truncate">
+                          <span className="font-semibold text-[#002141] uppercase tracking-wide text-[10px] mr-1">
+                            [{entry.entity_type}]
+                          </span>
+                          {entry.entity_id && <span className="font-mono text-[11px] mr-1 text-gray-600">({entry.entity_id})</span>}
+                          {detailsStr && detailsStr !== '{}' && (
+                            <span className="text-[11px] italic text-gray-600 truncate block">
+                              {detailsStr.length > 80 ? detailsStr.slice(0, 80) + '…' : detailsStr}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </>
+    );
+  };
 
   const renderUsers = () => <>
     <PanelHeader eyebrow="Comptes clients" title="Utilisateurs" description="Consultez uniquement les coordonnées et l’historique commercial nécessaires à la relation client ; aucune donnée bancaire n’est exposée." action={<button type="button" onClick={() => void downloadAdminCsv('/users/export.csv', 'heritage-utilisateurs.csv').catch((error) => notify(error.message))} className="admin-secondary-button">Exporter CSV</button>} />

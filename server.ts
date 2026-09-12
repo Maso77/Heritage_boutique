@@ -1482,13 +1482,32 @@ app.get('/api/admin/administrators', async (_req: AdminRequest, res: Response) =
   try {
     const admin = getSupabaseAdmin();
     const [adminsResult, invitationsResult, auditResult] = await Promise.all([
-      admin.from('profiles').select('id, email, full_name, is_active, created_at, updated_at, last_signed_in_at').eq('role', 'admin').order('created_at', { ascending: true }),
+      admin.from('profiles').select('id, email, full_name, role, is_active, created_at, updated_at, last_signed_in_at').eq('role', 'admin').order('created_at', { ascending: true }),
       admin.from('admin_invitations').select('id, expires_at, created_at, used_at, revoked_at, created_by, used_by').order('created_at', { ascending: false }),
-      admin.from('admin_audit_logs').select('id, admin_id, action, entity_type, entity_id, details, created_at').order('created_at', { ascending: false }).limit(30)
+      admin.from('admin_audit_logs').select('id, admin_id, action, entity_type, entity_id, details, created_at').order('created_at', { ascending: false }).limit(60)
     ]);
-    if (adminsResult.error || invitationsResult.error || auditResult.error) throw adminsResult.error || invitationsResult.error || auditResult.error;
-    res.json({ administrators: adminsResult.data || [], invitations: invitationsResult.data || [], auditLogs: auditResult.data || [] });
-  } catch {
+
+    if (adminsResult.error) throw adminsResult.error;
+
+    const { data: allProfiles } = await admin.from('profiles').select('id, email, full_name');
+    const profileMap = new Map((allProfiles || []).map((p: any) => [p.id, p]));
+
+    const auditLogs = (auditResult.data || []).map((log: any) => {
+      const actor = profileMap.get(log.admin_id);
+      return {
+        ...log,
+        actor_name: actor?.full_name || actor?.email || 'Administrateur',
+        actor_email: actor?.email || null
+      };
+    });
+
+    res.json({
+      administrators: adminsResult.data || [],
+      invitations: invitationsResult.data || [],
+      auditLogs
+    });
+  } catch (err: any) {
+    console.error('Error in GET /api/admin/administrators:', err);
     sendError(res, 503, 'La liste des administrateurs est indisponible.');
   }
 });
