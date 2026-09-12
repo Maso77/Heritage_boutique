@@ -46,7 +46,8 @@ export async function signUpWithSupabase({
           phone: cleanWhatsApp,
           whatsapp: cleanWhatsApp,
           commune: commune || 'Abidjan',
-          delivery_address: deliveryAddress || ''
+          delivery_address: deliveryAddress || '',
+          role: 'customer'
         }
       }
     });
@@ -58,7 +59,7 @@ export async function signUpWithSupabase({
       throw error;
     }
 
-    // Mise à jour ou insertion dans la table profiles si elle existe
+    // Mise à jour ou insertion dans la table profiles en tant que Compte Client / Visiteur (role = 'customer')
     if (data.user) {
       try {
         await supabase.from('profiles').upsert({
@@ -67,7 +68,9 @@ export async function signUpWithSupabase({
           email: cleanEmail,
           phone: cleanWhatsApp || null,
           commune: commune || '',
-          delivery_address: deliveryAddress || ''
+          delivery_address: deliveryAddress || '',
+          role: 'customer',
+          is_active: true
         });
       } catch (e) {
         // RLS ou table non encore migrée : ignoré car auth.users stocke déjà les métadonnées
@@ -154,7 +157,7 @@ export async function fetchUserProfile(userId: string): Promise<UserProfile | nu
       fullName: data.full_name,
       commune: data.commune,
       deliveryAddress: data.delivery_address,
-      role: data.role,
+      role: data.role || 'customer',
       createdAt: data.created_at
     };
   } catch (e) {

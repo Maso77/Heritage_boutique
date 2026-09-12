@@ -1473,7 +1473,7 @@ app.get('/api/admin/users', async (_req: AdminRequest, res: Response) => {
   try {
     const admin = getSupabaseAdmin();
     const [profilesResult, ordersResult] = await Promise.all([
-      admin.from('profiles').select('id, email, full_name, phone, commune, delivery_address, is_active, created_at, updated_at').eq('role', 'customer').order('created_at', { ascending: false }),
+      admin.from('profiles').select('id, email, full_name, phone, commune, delivery_address, is_active, role, created_at, updated_at').or('role.eq.customer,role.is.null').neq('role', 'admin').order('created_at', { ascending: false }),
       admin.from('orders').select('id, user_id, customer_email, order_number, total_xof, status, created_at').order('created_at', { ascending: false })
     ]);
     if (profilesResult.error || ordersResult.error) throw profilesResult.error || ordersResult.error;
@@ -1490,6 +1490,7 @@ app.get('/api/admin/users', async (_req: AdminRequest, res: Response) => {
       const customerOrders = orderLookup.get(String(profile.id)) || orderLookup.get(String(profile.email || '').toLowerCase()) || [];
       return {
         ...profile,
+        role: profile.role || 'customer',
         order_count: customerOrders.length,
         total_spent_xof: customerOrders.filter((order: any) => !['cancelled', 'refunded', 'payment_failed'].includes(order.status)).reduce((sum: number, order: any) => sum + Number(order.total_xof || 0), 0),
         orders: customerOrders.slice(0, 10)
@@ -1511,9 +1512,9 @@ app.patch('/api/admin/users/:id', async (req: AdminRequest, res: Response) => {
     if (authError) throw authError;
     const { data, error } = await admin
       .from('profiles')
-      .update({ is_active: req.body.is_active })
+      .update({ is_active: req.body.is_active, role: 'customer' })
       .eq('id', req.params.id)
-      .eq('role', 'customer')
+      .neq('role', 'admin')
       .select()
       .single();
     if (error) throw error;
@@ -1528,7 +1529,8 @@ app.get('/api/admin/users/export.csv', async (_req: AdminRequest, res: Response)
   try {
     const { data, error } = await getSupabaseAdmin().from('profiles')
       .select('full_name, email, phone, commune, is_active, created_at')
-      .eq('role', 'customer')
+      .or('role.eq.customer,role.is.null')
+      .neq('role', 'admin')
       .order('created_at', { ascending: false });
     if (error) throw error;
     const columns = ['full_name', 'email', 'phone', 'commune', 'is_active', 'created_at'];
