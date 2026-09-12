@@ -189,7 +189,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 }}
                 className="premium-cta w-full py-3 px-4 bg-[#002141] hover:bg-[#AC854B] text-[#FAF9F7] text-xs font-semibold uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer"
               >
-                <span>PASSER AU PAIEMENT</span>
+                <span>FINALISER MA COMMANDE</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 

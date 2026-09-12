@@ -6,11 +6,10 @@ import {
   ShieldCheck,
   Truck,
   MapPin,
-  Lock,
   ArrowRight,
   AlertCircle,
-  CreditCard,
-  Smartphone
+  MessageSquare,
+  CheckCircle2
 } from 'lucide-react';
 
 interface CheckoutViewProps {
@@ -18,7 +17,7 @@ interface CheckoutViewProps {
 }
 
 export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
-  const { cart, cartSubtotal, createOrder, processPaymentWebhook } = useStore();
+  const { cart, cartSubtotal, createOrder } = useStore();
 
   const [customer, setCustomer] = useState<OrderCustomer>({
     fullName: '',
@@ -29,10 +28,6 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
     notes: '',
     deliveryMode: 'livraison_abidjan'
   });
-
-  const [paymentMethod, setPaymentMethod] = useState<
-    'wave' | 'orange_money' | 'mtn_momo' | 'moov_money' | 'card_bancaire'
-  >('wave');
 
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -92,16 +87,12 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
 
     setIsProcessing(true);
 
-    // Create server order record with status pending_payment
-    const newOrder = createOrder(customer, paymentMethod);
-
-    // Simulate secure payment gateway transaction (Wave / Mobile Money webhook verification)
+    // Create server order record with direct command validation
     setTimeout(() => {
-      // Simulate successful payment confirmation webhook callback
-      processPaymentWebhook(newOrder.id, true);
+      createOrder(customer, 'transmission_whatsapp');
       setIsProcessing(false);
       navigate('/commande/confirmation');
-    }, 1500);
+    }, 600);
   };
 
   if (cart.length === 0) {
@@ -112,7 +103,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
             Votre panier est vide
           </h2>
           <p className="text-xs text-[#3A3A3A]">
-            Veuillez ajouter une pièce horlogère à votre sélection avant de procéder au paiement.
+            Veuillez ajouter une pièce horlogère à votre sélection avant de valider votre commande.
           </p>
           <button
             type="button"
@@ -147,7 +138,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
             Panier
           </button>
           <span>/</span>
-          <span className="text-[#002141] font-semibold">Paiement sécurisé</span>
+          <span className="text-[#002141] font-semibold">Validation de commande</span>
         </nav>
 
         <div className="max-w-3xl mb-10">
@@ -155,7 +146,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
             Finaliser votre commande
           </h1>
           <p className="text-sm text-[#3A3A3A]">
-            Renseignez vos coordonnées pour la remise de vos pièces à Abidjan et choisissez votre moyen de paiement sécurisé.
+            Renseignez vos coordonnées pour la livraison de vos pièces à Abidjan et transmettez directement votre commande à nos conseillers.
           </p>
         </div>
 
@@ -177,7 +168,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
                     1
                   </span>
                   <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-[#002141]">
-                    Vos coordonnées
+                    Vos coordonnées de livraison
                   </h2>
                 </div>
 
@@ -331,67 +322,27 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
                 )}
               </div>
 
-              {/* Step 3: Moyen de paiement */}
+              {/* Step 3: Information sur le processus */}
               <div className="bg-white border border-[#002141]/10 p-6 sm:p-8">
-                <div className="flex items-center gap-3 pb-4 mb-6 border-b border-[#002141]/10">
+                <div className="flex items-center gap-3 pb-4 mb-4 border-b border-[#002141]/10">
                   <span className="w-6 h-6 rounded-full bg-[#002141] text-[#FAF9F7] text-xs font-bold flex items-center justify-center">
                     3
                   </span>
                   <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-[#002141]">
-                    Moyen de paiement sécurisé
+                    Validation et transmission directes
                   </h2>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-                  {[
-                    { id: 'wave', label: 'Wave Mobile Money', badge: 'Recommandé CI', icon: Smartphone },
-                    { id: 'orange_money', label: 'Orange Money Côte d\'Ivoire', icon: Smartphone },
-                    { id: 'mtn_momo', label: 'MTN MoMo', icon: Smartphone },
-                    { id: 'moov_money', label: 'Moov Money', icon: Smartphone },
-                    { id: 'card_bancaire', label: 'Carte Bancaire (Visa / Mastercard)', icon: CreditCard }
-                  ].map((method) => {
-                    const Icon = method.icon;
-                    const isSelected = paymentMethod === method.id;
-                    return (
-                      <label
-                        key={method.id}
-                        className={`p-4 border cursor-pointer flex items-center justify-between transition-colors ${
-                          isSelected
-                            ? 'border-[#AC854B] bg-[#FAF9F7]'
-                            : 'border-[#002141]/15 hover:border-[#002141]/30'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Icon className="w-4 h-4 text-[#AC854B]" />
-                          <div>
-                            <span className="text-xs font-semibold text-[#002141] block">
-                              {method.label}
-                            </span>
-                            {method.badge && (
-                              <span className="text-[9px] font-bold text-[#AC854B] uppercase tracking-wider">
-                                {method.badge}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <input
-                          type="radio"
-                          name="paymentMethod"
-                          checked={isSelected}
-                          onChange={() => setPaymentMethod(method.id as any)}
-                          className="text-[#002141] focus:ring-[#AC854B]"
-                        />
-                      </label>
-                    );
-                  })}
-                </div>
-
-                <div className="flex items-start gap-3 p-3.5 bg-[#FAF9F7] border border-[#002141]/5 text-[11px] text-[#3A3A3A] leading-relaxed">
-                  <Lock className="w-4 h-4 text-[#AC854B] flex-shrink-0 mt-0.5" />
-                  <span>
-                    Votre paiement est sécurisé et chiffré. Le statut de votre commande est validé
-                    automatiquement dès confirmation de la transaction.
-                  </span>
+                <div className="flex items-start gap-3.5 p-4 bg-[#FAF9F7] border border-[#002141]/10 text-xs text-[#3A3A3A] leading-relaxed">
+                  <MessageSquare className="w-5 h-5 text-[#25D366] flex-shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold text-[#002141] block mb-1">
+                      Enregistrement instantané & transmission WhatsApp
+                    </span>
+                    <p>
+                      Aucun paiement en ligne n'est effectué sur ce site. Après validation de vos coordonnées, votre commande sera enregistrée et vous pourrez la transmettre directement par WhatsApp à notre conseiller pour convenir de la remise ou de la livraison à Abidjan.
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -470,7 +421,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
                   </span>
                 </div>
                 <div className="pt-3 border-t border-[#002141]/10 flex justify-between items-baseline">
-                  <span className="text-sm font-bold text-[#002141]">Total à régler</span>
+                  <span className="text-sm font-bold text-[#002141]">Montant total</span>
                   <span className="font-playfair text-xl font-bold text-[#002141]">
                     {formatXOF(totalAmount)}
                   </span>
@@ -487,24 +438,24 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
                   <span>VALIDATION EN COURS...</span>
                 ) : (
                   <>
-                    <span>RÉGLER {formatXOF(totalAmount)}</span>
+                    <span>VALIDER MA COMMANDE</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
               </button>
 
               <p className="text-[11px] text-[#3A3A3A]/75 text-center leading-relaxed">
-                Le prix et la disponibilité sont contrôlés à nouveau avant le paiement.
+                Le prix et la disponibilité sont contrôlés à nouveau avant la validation.
               </p>
 
               <div className="pt-4 border-t border-[#002141]/10 space-y-2 text-xs text-[#3A3A3A]/80">
                 <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-[#AC854B]" />
-                  <span>Chiffrement bancaire SSL / TLS</span>
+                  <CheckCircle2 className="w-4 h-4 text-[#AC854B]" />
+                  <span>Enregistrement sécurisé de votre commande</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Lock className="w-4 h-4 text-[#AC854B]" />
-                  <span>Validation directe sans intermédiaire</span>
+                  <ShieldCheck className="w-4 h-4 text-[#AC854B]" />
+                  <span>Conseiller dédié & suivi à Abidjan</span>
                 </div>
               </div>
             </div>

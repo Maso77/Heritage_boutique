@@ -1,7 +1,7 @@
 import React from 'react';
 import { useStore } from '../../context/StoreContext';
 import { formatXOF } from '../../data/products';
-import { CheckCircle, ShieldCheck, Phone, MapPin, Package, ArrowRight } from 'lucide-react';
+import { CheckCircle, Phone, MapPin, MessageSquare } from 'lucide-react';
 
 interface ConfirmationViewProps {
   navigate: (route: string) => void;
@@ -23,7 +23,7 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({ navigate }) 
           <button
             type="button"
             onClick={() => navigate('/compte')}
-            className="px-6 py-3 bg-[#002141] text-[#FAF9F7] text-xs font-semibold uppercase tracking-widest"
+            className="px-6 py-3 bg-[#002141] text-[#FAF9F7] text-xs font-semibold uppercase tracking-widest cursor-pointer"
           >
             VOIR MON COMPTE
           </button>
@@ -32,29 +32,68 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({ navigate }) 
     );
   }
 
+  // Pre-filled WhatsApp message generator
+  const whatsappPhone = '2250700000000'; // Default store phone number
+  const orderItemsSummary = currentOrder.items
+    ? currentOrder.items.map((i) => `• ${i.quantity}x ${i.product.name} (${formatXOF(i.product.priceXOF * i.quantity)})`).join('\n')
+    : '';
+
+  const whatsappMessage = `Bonjour HERITAGE,
+
+Je viens de valider ma commande N° *${currentOrder.orderNumber}* sur le site.
+
+*Détails du client :*
+• Nom : ${currentOrder.customer.fullName}
+• Téléphone : ${currentOrder.customer.phone}
+• Email : ${currentOrder.customer.email}
+
+*Mode de réception :*
+${currentOrder.customer.deliveryMode === 'livraison_abidjan' ? `• Livraison à Abidjan (${currentOrder.customer.commune}) - ${currentOrder.customer.deliveryAddress || ''}` : '• Retrait sur rendez-vous à la Maison HERITAGE (Yopougon)'}
+
+*Articles commandés :*
+${orderItemsSummary}
+
+*Total indicatif :* ${formatXOF(currentOrder.totalXOF)}
+
+Merci de me recontacter pour finaliser la livraison.`;
+
+  const whatsappUrl = `https://wa.me/${whatsappPhone}?text=${encodeURIComponent(whatsappMessage)}`;
+
   return (
     <div className="bg-[#FAF9F7] min-h-screen pt-24 pb-24">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Success Banner */}
-        <div className="bg-white border border-[#002141]/10 p-8 sm:p-12 text-center mb-8">
+        <div className="bg-white border border-[#002141]/10 p-8 sm:p-12 text-center mb-8 shadow-xs">
           <div className="w-16 h-16 mx-auto rounded-full bg-[#FAF9F7] border border-[#AC854B]/30 flex items-center justify-center text-[#AC854B] mb-6">
-            <CheckCircle className="w-8 h-8" />
+            <CheckCircle className="w-8 h-8 text-[#AC854B]" />
           </div>
 
           <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-[#AC854B] block mb-2">
-            PAIEMENT CONFIRMÉ AVEC SUCCÈS
+            COMMANDE ENREGISTRÉE AVEC SUCCÈS
           </span>
 
           <h1 className="font-playfair text-3xl sm:text-4xl font-bold text-[#002141] mb-4">
-            Merci pour votre commande
+            Merci pour votre confiance
           </h1>
 
           <p className="text-sm text-[#3A3A3A] max-w-lg mx-auto leading-relaxed mb-6">
-            Votre commande a bien été enregistrée et transmise à nos équipes à Abidjan. Un e-mail de
-            confirmation vous a été envoyé à l'adresse <strong className="text-[#002141]">{currentOrder.customer.email}</strong>.
+            Votre commande a bien été soumise et enregistrée auprès de nos services. Pour une prise en charge prioritaire et convenir de votre créneau de livraison à Abidjan, vous pouvez l'envoyer directement par WhatsApp.
           </p>
 
-          <div className="inline-flex flex-col sm:flex-row items-center gap-4 p-4 bg-[#FAF9F7] border border-[#002141]/10 text-xs">
+          {/* Prominent WhatsApp CTA Button */}
+          <div className="max-w-md mx-auto mb-6">
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full py-4 px-6 bg-[#25D366] hover:bg-[#1EBE5D] text-white text-xs font-bold uppercase tracking-[0.16em] flex items-center justify-center gap-3 shadow-md transition-all rounded-xs cursor-pointer"
+            >
+              <MessageSquare className="w-5 h-5 flex-shrink-0" />
+              <span>TRANSMETTRE LA COMMANDE PAR WHATSAPP</span>
+            </a>
+          </div>
+
+          <div className="inline-flex flex-col sm:flex-row items-center gap-4 p-4 bg-[#FAF9F7] border border-[#002141]/10 text-xs text-[#3A3A3A]">
             <div>
               <span className="text-[#3A3A3A]/70 block">Numéro de commande :</span>
               <strong className="font-mono text-sm text-[#002141]">{currentOrder.orderNumber}</strong>
@@ -63,18 +102,9 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({ navigate }) 
             <div>
               <span className="text-[#3A3A3A]/70 block">Statut de la commande :</span>
               <span className="font-bold text-[#002141] uppercase tracking-wider">
-                {currentOrder.status === 'paid' ? 'Payée — En préparation' : currentOrder.status}
+                Enregistrée — En attente de livraison
               </span>
             </div>
-            {currentOrder.paymentReference && (
-              <>
-                <span className="hidden sm:inline text-[#002141]/20">|</span>
-                <div>
-                  <span className="text-[#3A3A3A]/70 block">Réf. transaction :</span>
-                  <strong className="font-mono text-[#AC854B]">{currentOrder.paymentReference}</strong>
-                </div>
-              </>
-            )}
           </div>
         </div>
 
@@ -128,7 +158,7 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({ navigate }) 
                 </span>
               </div>
               <div className="pt-3 border-t border-[#002141]/10 flex justify-between items-baseline">
-                <span className="text-sm font-bold text-[#002141]">Montant réglé</span>
+                <span className="text-sm font-bold text-[#002141]">Montant total</span>
                 <span className="font-playfair text-lg font-bold text-[#002141]">
                   {formatXOF(currentOrder.totalXOF)}
                 </span>
@@ -160,9 +190,9 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({ navigate }) 
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 pt-2">
+                <div className="flex items-center gap-3 pt-2 border-t border-[#002141]/5">
                   <Phone className="w-4 h-4 text-[#AC854B] flex-shrink-0" />
-                  <span>Contact destinataire : {currentOrder.customer.phone}</span>
+                  <span>Contact : {currentOrder.customer.phone}</span>
                 </div>
               </div>
             </div>
@@ -175,15 +205,15 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({ navigate }) 
               <ol className="space-y-3 text-xs text-[#3A3A3A]">
                 <li className="flex gap-2.5">
                   <span className="font-bold text-[#AC854B]">1.</span>
-                  <span>Contrôle qualité horloger et mise sous scellé sécurisé.</span>
+                  <span>Transmission du récapitulatif par WhatsApp ou prise de contact par notre conseiller.</span>
                 </li>
                 <li className="flex gap-2.5">
                   <span className="font-bold text-[#AC854B]">2.</span>
-                  <span>Contact par votre conseiller HERITAGE pour convenir du créneau de remise.</span>
+                  <span>Contrôle qualité horloger et mise sous scellé de vos pièces.</span>
                 </li>
                 <li className="flex gap-2.5">
                   <span className="font-bold text-[#AC854B]">3.</span>
-                  <span>Remise en main propre avec vérification sur place des documents officiels.</span>
+                  <span>Remise en main propre ou livraison à l'adresse indiquée à Abidjan.</span>
                 </li>
               </ol>
             </div>

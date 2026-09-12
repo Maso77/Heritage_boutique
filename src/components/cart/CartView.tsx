@@ -168,7 +168,7 @@ export const CartView: React.FC<CartViewProps> = ({ navigate }) => {
 
               {/* Mandatory micro-copy */}
               <p className="text-[11px] text-[#3A3A3A]/75 leading-relaxed bg-[#FAF9F7] p-3 border border-[#002141]/5">
-                Le prix et la disponibilité sont contrôlés à nouveau avant le paiement.
+                Le prix et la disponibilité sont contrôlés à nouveau avant la validation de votre commande.
               </p>
 
               <div className="space-y-3">
@@ -178,7 +178,7 @@ export const CartView: React.FC<CartViewProps> = ({ navigate }) => {
                   onClick={() => navigate('/commande')}
                   className="premium-cta w-full py-4 px-6 bg-[#002141] hover:bg-[#AC854B] text-[#FAF9F7] text-xs font-bold uppercase tracking-[0.18em] flex items-center justify-center gap-3 cursor-pointer shadow-sm"
                 >
-                  <span>PASSER AU PAIEMENT</span>
+                  <span>PASSER À LA COMMANDE</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
 
@@ -195,7 +195,7 @@ export const CartView: React.FC<CartViewProps> = ({ navigate }) => {
               <div className="pt-4 border-t border-[#002141]/10 space-y-2 text-xs text-[#3A3A3A]/80">
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-[#AC854B]" />
-                  <span>Paiements Mobile Money et Cartes chiffrés</span>
+                  <span>Validation directe et transmission WhatsApp</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Truck className="w-4 h-4 text-[#AC854B]" />

@@ -207,8 +207,7 @@ export const Footer: React.FC<FooterProps> = ({ navigate }) => {
         {/* Bottom line with currency note and copyright */}
         <div className="pt-8 border-t border-[#FAF9F7]/10 flex flex-col md:flex-row items-center justify-between gap-4 text-[11px] text-[#FAF9F7]/60">
           <p>
-            Tous nos prix sont affichés en Francs CFA (FCFA / XOF). Paiements sécurisés Wave, Orange
-            Money, MTN MoMo, Moov Money et Carte.
+            Tous nos prix sont affichés en Francs CFA (FCFA / XOF). Commandes validées et remises en main propre à Abidjan.
           </p>
           <p>&copy; {new Date().getFullYear()} HERITAGE. Tous droits réservés. Abidjan, Côte d'Ivoire.</p>
         </div>

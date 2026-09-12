@@ -20,7 +20,7 @@ interface StoreContextType {
   setCurrentOrder: (order: Order | null) => void;
   createOrder: (
     customer: OrderCustomer,
-    paymentMethod: 'wave' | 'orange_money' | 'mtn_momo' | 'moov_money' | 'card_bancaire'
+    paymentMethod?: string
   ) => Order;
   processPaymentWebhook: (orderId: string, success: boolean) => void;
   userEmail: string | null;
@@ -221,7 +221,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const createOrder = (
     customer: OrderCustomer,
-    paymentMethod: 'wave' | 'orange_money' | 'mtn_momo' | 'moov_money' | 'card_bancaire'
+    paymentMethod: string = 'commande_directe'
   ): Order => {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -233,24 +233,26 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       id: 'ord-' + Date.now(),
       orderNumber,
       createdAt: new Date().toISOString(),
-      status: 'pending_payment',
+      status: 'processing',
       customer,
       items: [...cart],
       subtotalXOF: cartSubtotal,
       deliveryCostXOF,
       totalXOF,
-      paymentMethod,
+      paymentMethod: paymentMethod as any,
       statusHistory: [
         {
-          status: 'pending_payment',
+          status: 'processing',
           timestamp: new Date().toISOString(),
-          note: 'Commande initiée côté serveur en attente de validation du paiement.'
+          note: 'Commande transmise et enregistrée avec succès à Abidjan.'
         }
       ]
     };
 
     setOrders((prev) => [newOrder, ...prev]);
     setCurrentOrder(newOrder);
+    // Clear cart upon successful order submission
+    setCart([]);
     // Synchroniser avec Supabase
     syncOrderToSupabase(newOrder);
     return newOrder;

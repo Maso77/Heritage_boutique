@@ -305,7 +305,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, n
 
               {/* Mandatory Micro-copy */}
               <p className="text-[11px] text-[#3A3A3A]/75 text-center leading-relaxed pt-1">
-                Le prix et la disponibilité sont contrôlés à nouveau avant le paiement.
+                Le prix et la disponibilité sont contrôlés à nouveau avant la validation de votre commande.
               </p>
             </div>
 

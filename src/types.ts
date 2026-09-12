@@ -94,7 +94,7 @@ export interface Order {
   subtotalXOF: number;
   deliveryCostXOF: number;
   totalXOF: number;
-  paymentMethod: 'wave' | 'orange_money' | 'mtn_momo' | 'moov_money' | 'card_bancaire';
+  paymentMethod?: string;
   paymentReference?: string;
   statusHistory: {
     status: OrderStatus;
