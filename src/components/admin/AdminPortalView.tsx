@@ -875,24 +875,36 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
       if (tab === 'dashboard') setDashboard(await adminRequest(dashboardUrl()));
       if (tab === 'products') {
         const [catalog, gallery, reviews] = await Promise.all([adminRequest<AnyRecord[]>('/products'), adminRequest<AnyRecord[]>('/media'), adminRequest<AnyRecord[]>('/resources/reviews')]);
-        setProducts(catalog);
-        setMedia(gallery);
-        setResources((current) => ({ ...current, reviews }));
+        setProducts(Array.isArray(catalog) ? catalog : []);
+        setMedia(Array.isArray(gallery) ? gallery : []);
+        setResources((current) => ({ ...current, reviews: Array.isArray(reviews) ? reviews : [] }));
       }
-      if (tab === 'orders') setOrders(await adminRequest('/orders'));
+      if (tab === 'orders') {
+        const res = await adminRequest<AnyRecord[]>('/orders');
+        setOrders(Array.isArray(res) ? res : []);
+      }
       if (tab === 'administrators') {
         const response = await adminRequest<{ administrators: AnyRecord[]; invitations: AnyRecord[]; auditLogs: AnyRecord[] }>('/administrators');
-        setAdministrators(response.administrators);
-        setInvitations(response.invitations);
-        setAuditLogs(response.auditLogs || []);
+        setAdministrators(Array.isArray(response?.administrators) ? response.administrators : []);
+        setInvitations(Array.isArray(response?.invitations) ? response.invitations : []);
+        setAuditLogs(Array.isArray(response?.auditLogs) ? response.auditLogs : []);
       }
-      if (tab === 'users') setUsers(await adminRequest('/users'));
-      if (tab === 'media') setMedia(await adminRequest('/media'));
-      if (tab === 'messages') setContactMessages(await adminRequest('/contact-messages'));
+      if (tab === 'users') {
+        const res = await adminRequest<AnyRecord[]>('/users');
+        setUsers(Array.isArray(res) ? res : []);
+      }
+      if (tab === 'media') {
+        const res = await adminRequest<AnyRecord[]>('/media');
+        setMedia(Array.isArray(res) ? res : []);
+      }
+      if (tab === 'messages') {
+        const res = await adminRequest<AnyRecord[]>('/contact-messages');
+        setContactMessages(Array.isArray(res) ? res : []);
+      }
       if (tab === 'coordinates') setSiteSettings(await adminRequest('/site-settings'));
       if (['reviews', 'blogs', 'faqs', 'legal', 'meta', 'pixels'].includes(tab)) {
         const records = await adminRequest<AnyRecord[]>(`/resources/${tab}`);
-        setResources((current) => ({ ...current, [tab]: records }));
+        setResources((current) => ({ ...current, [tab]: Array.isArray(records) ? records : [] }));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Les données ne sont pas disponibles.';
@@ -993,7 +1005,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     });
   }, [orders, orderSearch, orderStatusFilter, orderDateFromFilter, orderDateToFilter, orderSort]);
   const visibleUsers = useMemo(() => {
-    const filtered = users.filter((user) => {
+    const safeUsers = Array.isArray(users) ? users : [];
+    const filtered = safeUsers.filter((user) => {
       const query = userSearch.trim().toLocaleLowerCase('fr-FR');
       const matchesSearch =
         !query ||
@@ -3570,11 +3583,12 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   };
 
   const renderUsers = () => {
-    const totalUsersCount = users.length;
-    const activeUsersCount = users.filter((u) => u.is_active !== false).length;
-    const blockedUsersCount = users.filter((u) => u.is_active === false).length;
-    const aggregateRevenue = users.reduce((sum, u) => sum + Number(u.total_spent_xof || 0), 0);
-    const aggregateOrdersCount = users.reduce((sum, u) => sum + Number(u.order_count || 0), 0);
+    const safeUsers = Array.isArray(users) ? users : [];
+    const totalUsersCount = safeUsers.length;
+    const activeUsersCount = safeUsers.filter((u) => u.is_active !== false).length;
+    const blockedUsersCount = safeUsers.filter((u) => u.is_active === false).length;
+    const aggregateRevenue = safeUsers.reduce((sum, u) => sum + Number(u.total_spent_xof || 0), 0);
+    const aggregateOrdersCount = safeUsers.reduce((sum, u) => sum + Number(u.order_count || 0), 0);
 
     const toggleUserStatus = async (userToUpdate: AnyRecord) => {
       const nextStatus = userToUpdate.is_active === false;

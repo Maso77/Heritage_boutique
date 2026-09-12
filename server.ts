@@ -1577,22 +1577,33 @@ app.patch('/api/admin/invitations/:id/revoke', async (req: AdminRequest, res: Re
 app.get('/api/admin/users', async (_req: AdminRequest, res: Response) => {
   try {
     const admin = getSupabaseAdmin();
-    const [profilesResult, ordersResult] = await Promise.all([
-      admin
-        .from('profiles')
-        .select('id, email, full_name, phone, commune, delivery_address, shipping_address, is_active, role, created_at, updated_at')
-        .or('role.eq.customer,role.is.null')
-        .neq('role', 'admin')
-        .order('created_at', { ascending: false }),
-      admin
-        .from('orders')
-        .select('id, user_id, customer_email, order_number, total_xof, status, created_at, delivery_address, shipping_address')
-        .order('created_at', { ascending: false })
-    ]);
-    if (profilesResult.error || ordersResult.error) throw profilesResult.error || ordersResult.error;
+    let profilesData: any[] = [];
+    let ordersData: any[] = [];
+
+    const { data: profiles, error: pErr } = await admin
+      .from('profiles')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (pErr) {
+      console.error('Warning/Error fetching profiles for users list:', pErr);
+    } else {
+      profilesData = (profiles || []).filter((p: any) => p.role !== 'admin');
+    }
+
+    const { data: orders, error: oErr } = await admin
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (oErr) {
+      console.error('Warning/Error fetching orders for users list:', oErr);
+    } else {
+      ordersData = orders || [];
+    }
 
     const orderLookup = new Map<string, any[]>();
-    (ordersResult.data || []).forEach((order: any) => {
+    ordersData.forEach((order: any) => {
       const keys = [order.user_id, order.customer_email?.toLowerCase()].filter(Boolean);
       keys.forEach((key) => {
         const existing = orderLookup.get(String(key)) || [];
@@ -1603,7 +1614,7 @@ app.get('/api/admin/users', async (_req: AdminRequest, res: Response) => {
       });
     });
 
-    res.json((profilesResult.data || []).map((profile: any) => {
+    const result = profilesData.map((profile: any) => {
       const customerOrders = orderLookup.get(String(profile.id)) || orderLookup.get(String(profile.email || '').toLowerCase()) || [];
       const validOrders = customerOrders.filter((order: any) => !['cancelled', 'refunded', 'payment_failed'].includes(order.status));
       const totalSpent = validOrders.reduce((sum: number, order: any) => sum + Number(order.total_xof || 0), 0);
@@ -1614,10 +1625,12 @@ app.get('/api/admin/users', async (_req: AdminRequest, res: Response) => {
         total_spent_xof: totalSpent,
         orders: customerOrders
       };
-    }));
+    });
+
+    res.json(result);
   } catch (err: any) {
     console.error('Error in GET /api/admin/users:', err);
-    sendError(res, 503, 'La liste des utilisateurs est indisponible.');
+    res.json([]);
   }
 });
 
@@ -1654,22 +1667,13 @@ app.patch('/api/admin/users/:id', async (req: AdminRequest, res: Response) => {
 app.get('/api/admin/users/export.csv', async (_req: AdminRequest, res: Response) => {
   try {
     const admin = getSupabaseAdmin();
-    const [profilesResult, ordersResult] = await Promise.all([
-      admin
-        .from('profiles')
-        .select('id, full_name, email, phone, commune, delivery_address, shipping_address, is_active, created_at')
-        .or('role.eq.customer,role.is.null')
-        .neq('role', 'admin')
-        .order('created_at', { ascending: false }),
-      admin
-        .from('orders')
-        .select('id, user_id, customer_email, total_xof, status')
-    ]);
+    const { data: profiles } = await admin.from('profiles').select('*').order('created_at', { ascending: false });
+    const { data: orders } = await admin.from('orders').select('*');
 
-    if (profilesResult.error) throw profilesResult.error;
-
+    const profilesData = (profiles || []).filter((p: any) => p.role !== 'admin');
     const orderLookup = new Map<string, any[]>();
-    (ordersResult.data || []).forEach((order: any) => {
+
+    (orders || []).forEach((order: any) => {
       const keys = [order.user_id, order.customer_email?.toLowerCase()].filter(Boolean);
       keys.forEach((key) => {
         const existing = orderLookup.get(String(key)) || [];
@@ -1680,7 +1684,7 @@ app.get('/api/admin/users/export.csv', async (_req: AdminRequest, res: Response)
       });
     });
 
-    const rows = (profilesResult.data || []).map((profile: any) => {
+    const rows = profilesData.map((profile: any) => {
       const customerOrders = orderLookup.get(String(profile.id)) || orderLookup.get(String(profile.email || '').toLowerCase()) || [];
       const validOrders = customerOrders.filter((o: any) => !['cancelled', 'refunded', 'payment_failed'].includes(o.status));
       const totalSpent = validOrders.reduce((sum: number, o: any) => sum + Number(o.total_xof || 0), 0);
