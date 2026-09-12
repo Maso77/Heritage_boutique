@@ -844,6 +844,18 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [statusChangeError, setStatusChangeError] = useState('');
   const [savingOrderStatus, setSavingOrderStatus] = useState(false);
 
+  const [mediaSearch, setMediaSearch] = useState('');
+  const [mediaFolderFilter, setMediaFolderFilter] = useState('');
+  const [mediaUsageFilter, setMediaUsageFilter] = useState('');
+  const [mediaSort, setMediaSort] = useState<'date_desc' | 'date_asc' | 'size_desc' | 'name_asc'>('date_desc');
+  const [selectedMediaModal, setSelectedMediaModal] = useState<AnyRecord | null>(null);
+  const [mediaDragActive, setMediaDragActive] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; fileName: string } | null>(null);
+  const [batchUploadFolder, setBatchUploadFolder] = useState<string>('produit');
+  const [batchUploadAltText, setBatchUploadAltText] = useState('');
+  const [batchUploadTags, setBatchUploadTags] = useState('');
+  const [deleteWarningMedia, setDeleteWarningMedia] = useState<AnyRecord | null>(null);
+
   const dashboardUrl = () => {
     const now = new Date();
     const from = new Date(now);
@@ -1036,6 +1048,35 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
       return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
     });
   }, [users, userSearch, userStatusFilter, userOrderFilter, userSort]);
+
+  const visibleMedia = useMemo(() => {
+    const safeMedia = Array.isArray(media) ? media : [];
+    const filtered = safeMedia.filter((asset) => {
+      const query = mediaSearch.trim().toLowerCase();
+      const tagsStr = Array.isArray(asset.tags) ? asset.tags.join(' ') : String(asset.tags || '');
+      const matchesSearch =
+        !query ||
+        [asset.file_name, asset.alt_text, asset.folder, tagsStr]
+          .some((v) => String(v || '').toLowerCase().includes(query));
+
+      const matchesFolder = !mediaFolderFilter || (asset.folder || 'general') === mediaFolderFilter;
+
+      const hasUsage = Array.isArray(asset.usage) && asset.usage.length > 0;
+      const matchesUsage =
+        !mediaUsageFilter ||
+        (mediaUsageFilter === 'used' && hasUsage) ||
+        (mediaUsageFilter === 'unused' && !hasUsage);
+
+      return matchesSearch && matchesFolder && matchesUsage;
+    });
+
+    return filtered.sort((a, b) => {
+      if (mediaSort === 'date_asc') return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+      if (mediaSort === 'size_desc') return Number(b.size_bytes || 0) - Number(a.size_bytes || 0);
+      if (mediaSort === 'name_asc') return String(a.file_name || '').localeCompare(String(b.file_name || ''));
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
+  }, [media, mediaSearch, mediaFolderFilter, mediaUsageFilter, mediaSort]);
 
   const logout = async () => {
     await signOutAdministrator();
@@ -4087,7 +4128,780 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     );
   };
 
-  const renderMedia = () => <><PanelHeader eyebrow="Fichiers de la boutique" title="Galerie média" description="Ajoutez plusieurs images, renseignez leur texte alternatif, puis organisez-les par dossier ou tag. Les images générées par IA sont refusées." action={<label className="admin-primary-button cursor-pointer"><Plus className="h-4 w-4" /> Ajouter des images<input type="file" multiple accept="image/jpeg,image/png,image/webp,image/avif" className="sr-only" onChange={uploadMedia} /></label>} />{media.length === 0 ? <EmptyState title="La galerie est vide" body="Ajoutez la première image produit depuis votre appareil." /> : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{media.map((asset) => <article key={asset.id} className="overflow-hidden border border-[#002141]/15 bg-white"><img src={asset.public_url} alt={asset.alt_text || asset.file_name} className="h-44 w-full object-cover" /><div className="space-y-3 p-4"><div><p className="truncate text-sm font-semibold text-[#002141]">{asset.file_name}</p><p className="mt-1 truncate text-xs text-[#3A3A3A]">{asset.folder || 'general'} · {asset.alt_text}</p>{asset.usage?.length > 0 && <p className="mt-1 text-[11px] text-[#AC854B]">Utilisée : {asset.usage.map((usage: AnyRecord) => `${usage.type} ${usage.label}`).join(', ')}</p>}</div><div className="flex justify-end gap-2"><button type="button" onClick={async () => { const alt_text = window.prompt('Texte alternatif :', asset.alt_text || ''); if (!alt_text?.trim()) return; const folder = window.prompt('Dossier :', asset.folder || 'general') || 'general'; const tags = window.prompt('Tags séparés par des virgules :', Array.isArray(asset.tags) ? asset.tags.join(', ') : ''); try { await adminRequest(`/media/${asset.id}`, { method: 'PATCH', body: { alt_text: alt_text.trim(), folder, tags: JSON.stringify((tags || '').split(',').map((tag) => tag.trim()).filter(Boolean)), product_id: asset.product_id || null, sort_order: asset.sort_order || 0 } }); await loadTab('media'); notify('Média mis à jour.'); } catch (error) { notify(error instanceof Error ? error.message : 'Mise à jour impossible.'); } }} className="admin-icon-button" aria-label="Modifier le média"><Pencil className="h-4 w-4" /></button><button type="button" onClick={async () => { if (!window.confirm(asset.usage?.length ? 'Cette image est utilisée. La suppression sera refusée tant qu’elle est liée à un contenu. Continuer ?' : 'Supprimer cette image définitivement ?')) return; try { await adminRequest(`/media/${asset.id}`, { method: 'DELETE' }); await loadTab('media'); notify('Image supprimée.'); } catch (error) { notify(error instanceof Error ? error.message : 'Suppression impossible.'); } }} className="admin-icon-button text-red-800" aria-label="Supprimer l’image"><Trash2 className="h-4 w-4" /></button></div></div></article>)}</div>}</>;
+  const renderMedia = () => {
+    const safeMedia = Array.isArray(media) ? media : [];
+    const totalMediaCount = safeMedia.length;
+    const usedMediaCount = safeMedia.filter((m) => Array.isArray(m.usage) && m.usage.length > 0).length;
+    const freeMediaCount = totalMediaCount - usedMediaCount;
+    const totalStorageBytes = safeMedia.reduce((sum, m) => sum + Number(m.size_bytes || 0), 0);
+
+    const formatBytes = (bytes: number) => {
+      if (!bytes || bytes <= 0) return '0 Ko';
+      const k = 1024;
+      const sizes = ['Octets', 'Ko', 'Mo', 'Go'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+    };
+
+    const optimizeImageFile = (file: File, targetFolder: string, defaultAlt: string, defaultTags: string): Promise<{
+      fileName: string;
+      mimeType: string;
+      contentBase64: string;
+      altText: string;
+      folder: string;
+      tags: string[];
+      width: number;
+      height: number;
+    }> => {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        const objectUrl = URL.createObjectURL(file);
+        img.onload = () => {
+          URL.revokeObjectURL(objectUrl);
+          let { width, height } = img;
+          const maxDim = 1920;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Impossible d\'initialiser le canvas d\'optimisation.'));
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, width, height);
+          let dataUrl = canvas.toDataURL('image/webp', 0.88);
+          let mimeType = 'image/webp';
+          let fileName = file.name.replace(/\.[^/.]+$/, '') + '.webp';
+
+          if (!dataUrl.startsWith('data:image/webp')) {
+            dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+            mimeType = 'image/jpeg';
+            fileName = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
+          }
+
+          const cleanAlt = defaultAlt.trim() || file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+          const tagList = defaultTags.split(',').map((t) => t.trim()).filter(Boolean);
+
+          resolve({
+            fileName,
+            mimeType,
+            contentBase64: dataUrl,
+            altText: cleanAlt,
+            folder: targetFolder || 'general',
+            tags: tagList,
+            width,
+            height
+          });
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          reject(new Error(`Impossible de charger l'image ${file.name}`));
+        };
+        img.src = objectUrl;
+      });
+    };
+
+    const processAndUploadFiles = async (fileList: FileList | File[]) => {
+      const files = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
+      if (files.length === 0) {
+        notify('Veuillez sélectionner des fichiers image valides (JPEG, PNG, WebP, AVIF).');
+        return;
+      }
+
+      setUploadProgress({ current: 0, total: files.length, fileName: files[0].name });
+
+      let successCount = 0;
+      let failCount = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setUploadProgress({ current: i + 1, total: files.length, fileName: file.name });
+        try {
+          const optimized = await optimizeImageFile(file, batchUploadFolder, batchUploadAltText, batchUploadTags);
+          await adminRequest('/media/upload', {
+            method: 'POST',
+            body: {
+              fileName: optimized.fileName,
+              mimeType: optimized.mimeType,
+              contentBase64: optimized.contentBase64,
+              altText: optimized.altText,
+              folder: optimized.folder,
+              tags: optimized.tags,
+              width: optimized.width,
+              height: optimized.height
+            }
+          });
+          successCount++;
+        } catch (err: any) {
+          console.error(`Erreur d'envoi pour ${file.name}:`, err);
+          failCount++;
+        }
+      }
+
+      setUploadProgress(null);
+      await loadTab('media');
+      if (failCount === 0) {
+        notify(`${successCount} image(s) web-optimisée(s) et ajoutée(s) avec succès !`);
+      } else {
+        notify(`${successCount} image(s) ajoutée(s), ${failCount} échec(s).`);
+      }
+    };
+
+    const attemptDeleteMedia = async (asset: AnyRecord) => {
+      if (Array.isArray(asset.usage) && asset.usage.length > 0) {
+        setDeleteWarningMedia(asset);
+        return;
+      }
+
+      if (!window.confirm(`Voulez-vous vraiment supprimer définitivement l'image "${asset.file_name}" de Supabase Storage ?`)) {
+        return;
+      }
+
+      try {
+        await adminRequest(`/media/${asset.id}`, { method: 'DELETE' });
+        await loadTab('media');
+        if (selectedMediaModal && selectedMediaModal.id === asset.id) {
+          setSelectedMediaModal(null);
+        }
+        notify('Image supprimée de Supabase Storage et du catalogue.');
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'La suppression de l\'image a échoué.');
+      }
+    };
+
+    const copyUrl = (url: string) => {
+      navigator.clipboard.writeText(url);
+      notify('URL publique copiée dans le presse-papier !');
+    };
+
+    return (
+      <>
+        <PanelHeader
+          eyebrow="Supabase Storage & Assets"
+          title="Galerie Média & Optimisation Web"
+          description="Importez vos visuels par glisser-déposer. Les fichiers sont automatiquement redimensionnés et compressés en WebP (max 1920px). Organisez-les par dossier ou tag et vérifiez leur utilisation exacte sur les produits et articles de la boutique."
+          action={
+            <label className="admin-primary-button cursor-pointer flex items-center gap-2">
+              <Plus className="h-4 w-4" /> Parcourir et Importer
+              <input
+                type="file"
+                multiple
+                accept="image/jpeg,image/png,image/webp,image/avif"
+                className="sr-only"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    void processAndUploadFiles(e.target.files);
+                  }
+                }}
+              />
+            </label>
+          }
+        />
+
+        {/* Global Storage & Usage Metrics */}
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="border border-[#002141]/15 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#3A3A3A]">Total Visuels</span>
+              <ImageIcon className="h-5 w-5 text-[#AC854B]" />
+            </div>
+            <p className="mt-2 text-2xl font-bold text-[#002141]">{totalMediaCount}</p>
+            <p className="mt-1 text-[11px] text-[#3A3A3A]">Images stockées sur Supabase Storage</p>
+          </div>
+
+          <div className="border border-[#002141]/15 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#3A3A3A]">Images Utilisées</span>
+              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+            </div>
+            <p className="mt-2 text-2xl font-bold text-[#002141]">{usedMediaCount}</p>
+            <p className="mt-1 text-[11px] text-emerald-700">Liées aux produits ou articles</p>
+          </div>
+
+          <div className="border border-[#002141]/15 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#3A3A3A]">Images Libres</span>
+              <FolderOpen className="h-5 w-5 text-[#AC854B]" />
+            </div>
+            <p className="mt-2 text-2xl font-bold text-[#002141]">{freeMediaCount}</p>
+            <p className="mt-1 text-[11px] text-[#3A3A3A]">Disponibles pour association</p>
+          </div>
+
+          <div className="border border-[#002141]/15 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#3A3A3A]">Volume Total</span>
+              <HardDrive className="h-5 w-5 text-[#002141]" />
+            </div>
+            <p className="mt-2 text-xl font-bold text-[#002141]">{formatBytes(totalStorageBytes)}</p>
+            <p className="mt-1 text-[11px] text-[#3A3A3A]">Stockage optimisé WebP</p>
+          </div>
+        </div>
+
+        {/* Drag and Drop Zone & Batch Settings */}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setMediaDragActive(true);
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            setMediaDragActive(false);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setMediaDragActive(false);
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+              void processAndUploadFiles(e.dataTransfer.files);
+            }
+          }}
+          className={`mb-6 border-2 border-dashed p-6 transition-colors text-center ${
+            mediaDragActive
+              ? 'border-[#AC854B] bg-[#AC854B]/10'
+              : 'border-[#002141]/20 bg-white hover:border-[#AC854B]/60'
+          }`}
+        >
+          <div className="mx-auto flex max-w-xl flex-col items-center justify-center">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#002141]/10 text-[#002141]">
+              <UploadCloud className="h-6 w-6 text-[#AC854B]" />
+            </div>
+            <h3 className="text-sm font-bold text-[#002141]">
+              Glissez-déposez vos images ici pour un import multiple rapide
+            </h3>
+            <p className="mt-1 text-xs text-[#3A3A3A]">
+              Formats acceptés : JPEG, PNG, WebP, AVIF · Conversion WebP et redimensionnement auto (1920px max)
+            </p>
+
+            {/* Batch Upload Configuration Controls */}
+            <div className="mt-4 grid w-full gap-3 sm:grid-cols-3 text-left">
+              <div>
+                <label className="block text-[11px] font-bold text-[#002141] mb-1">Dossier de destination</label>
+                <select
+                  value={batchUploadFolder}
+                  onChange={(e) => setBatchUploadFolder(e.target.value)}
+                  className="admin-input text-xs py-1.5"
+                >
+                  <option value="produit">Produit</option>
+                  <option value="catégorie">Catégorie</option>
+                  <option value="éditorial">Éditorial</option>
+                  <option value="blog">Blog</option>
+                  <option value="general">Général</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-[#002141] mb-1">Texte Alt par défaut</label>
+                <input
+                  type="text"
+                  value={batchUploadAltText}
+                  onChange={(e) => setBatchUploadAltText(e.target.value)}
+                  placeholder="Ex: Montre de luxe Heritage"
+                  className="admin-input text-xs py-1.5"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-[#002141] mb-1">Tags (séparés par virgules)</label>
+                <input
+                  type="text"
+                  value={batchUploadTags}
+                  onChange={(e) => setBatchUploadTags(e.target.value)}
+                  placeholder="Ex: luxe, montre, abidjan"
+                  className="admin-input text-xs py-1.5"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Upload Progress Indicator */}
+          {uploadProgress && (
+            <div className="mt-4 border-t border-[#002141]/10 pt-4 text-center">
+              <div className="flex items-center justify-between text-xs font-bold text-[#002141] mb-1">
+                <span>Optimisation et envoi : {uploadProgress.fileName}</span>
+                <span>
+                  {uploadProgress.current} / {uploadProgress.total}
+                </span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+                <div
+                  className="h-full bg-[#AC854B] transition-all duration-300"
+                  style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Filters, Search and Sorting Bar */}
+        <div className="mb-6 border border-[#002141]/15 bg-white p-4">
+          <div className="grid gap-3 md:grid-cols-4">
+            <div>
+              <label className="block text-xs font-semibold text-[#002141] mb-1">Rechercher une image</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-[#3A3A3A]/60" />
+                <input
+                  type="text"
+                  value={mediaSearch}
+                  onChange={(e) => setMediaSearch(e.target.value)}
+                  placeholder="Nom du fichier, texte alt, tag…"
+                  className="admin-input pl-9"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#002141] mb-1">Filtrer par Dossier</label>
+              <select
+                value={mediaFolderFilter}
+                onChange={(e) => setMediaFolderFilter(e.target.value)}
+                className="admin-input"
+              >
+                <option value="">Tous les dossiers</option>
+                <option value="produit">Dossier Produit</option>
+                <option value="catégorie">Dossier Catégorie</option>
+                <option value="éditorial">Dossier Éditorial</option>
+                <option value="blog">Dossier Blog</option>
+                <option value="general">Dossier Général</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#002141] mb-1">Filtrer par Utilisation</label>
+              <select
+                value={mediaUsageFilter}
+                onChange={(e) => setMediaUsageFilter(e.target.value)}
+                className="admin-input"
+              >
+                <option value="">Toutes les images</option>
+                <option value="used">Images Utilisées (Liées)</option>
+                <option value="unused">Images Libres (Non liées)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#002141] mb-1">Trier par</label>
+              <select
+                value={mediaSort}
+                onChange={(e) => setMediaSort(e.target.value as any)}
+                className="admin-input"
+              >
+                <option value="date_desc">Ajout (Plus récentes)</option>
+                <option value="date_asc">Ajout (Plus anciennes)</option>
+                <option value="size_desc">Poids du fichier (Décroissant)</option>
+                <option value="name_asc">Nom alphabétique (A-Z)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Main Media Grid */}
+        {safeMedia.length === 0 ? (
+          <EmptyState
+            title="La galerie média est vide"
+            body="Glissez-déposez des visuels ci-dessus ou cliquez sur 'Parcourir et Importer' pour alimenter votre médiathèque."
+          />
+        ) : visibleMedia.length === 0 ? (
+          <EmptyState
+            title="Aucune image ne correspond aux critères"
+            body="Essayez de réinitialiser vos filtres de dossier, d'utilisation ou votre terme de recherche."
+          />
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {visibleMedia.map((asset) => {
+              const hasUsage = Array.isArray(asset.usage) && asset.usage.length > 0;
+              const tagsList = Array.isArray(asset.tags)
+                ? asset.tags
+                : typeof asset.tags === 'string'
+                ? asset.tags.split(',').map((t) => t.trim()).filter(Boolean)
+                : [];
+
+              return (
+                <article
+                  key={asset.id}
+                  className="group relative flex flex-col justify-between border border-[#002141]/15 bg-white overflow-hidden shadow-sm hover:shadow-md transition-shadow"
+                >
+                  {/* Image Container & Overlay */}
+                  <div className="relative h-48 w-full bg-gray-100 overflow-hidden">
+                    <img
+                      src={asset.public_url}
+                      alt={asset.alt_text || asset.file_name}
+                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      loading="lazy"
+                    />
+
+                    {/* Format & Dimensions Badge */}
+                    <div className="absolute top-2 left-2 flex items-center gap-1.5">
+                      <span className="rounded bg-[#002141]/80 px-2 py-0.5 text-[10px] font-bold uppercase text-white backdrop-blur-sm">
+                        {asset.folder || 'general'}
+                      </span>
+                      {asset.width && asset.height && (
+                        <span className="rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white backdrop-blur-sm">
+                          {asset.width}x{asset.height}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Usage Status Badge */}
+                    <div className="absolute top-2 right-2">
+                      {hasUsage ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-700/90 px-2.5 py-0.5 text-[10px] font-bold text-white shadow-sm backdrop-blur-sm">
+                          <CheckCircle2 className="h-3 w-3" /> Utilisée ({asset.usage.length})
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[#AC854B]/90 px-2 py-0.5 text-[10px] font-bold text-white shadow-sm backdrop-blur-sm">
+                          Libre
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Card Content & Details */}
+                  <div className="p-4 space-y-2 flex-1 flex flex-col justify-between">
+                    <div>
+                      <p className="truncate text-xs font-bold text-[#002141]" title={asset.file_name}>
+                        {asset.file_name}
+                      </p>
+                      <p className="mt-1 line-clamp-2 text-[11px] text-[#3A3A3A] italic" title={asset.alt_text}>
+                        "{asset.alt_text || 'Aucun texte alternatif'}"
+                      </p>
+
+                      <div className="mt-2 flex items-center justify-between text-[11px] text-gray-500">
+                        <span>{formatBytes(asset.size_bytes)}</span>
+                        <span>{asset.mime_type?.replace('image/', '').toUpperCase() || 'WEBP'}</span>
+                      </div>
+
+                      {tagsList.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {tagsList.slice(0, 3).map((tag: string) => (
+                            <span key={tag} className="inline-block rounded bg-[#002141]/5 px-1.5 py-0.5 text-[10px] text-[#002141]">
+                              #{tag}
+                            </span>
+                          ))}
+                          {tagsList.length > 3 && (
+                            <span className="text-[10px] text-gray-400">+{tagsList.length - 3}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Card Footer Actions */}
+                    <div className="mt-3 flex items-center justify-between border-t border-[#002141]/10 pt-3">
+                      <button
+                        type="button"
+                        onClick={() => copyUrl(asset.public_url)}
+                        className="text-[11px] font-semibold text-gray-600 hover:text-[#002141] flex items-center gap-1"
+                        title="Copier l'URL publique Supabase"
+                      >
+                        <Copy className="h-3.5 w-3.5" /> URL
+                      </button>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedMediaModal(asset)}
+                          className="admin-icon-button p-1.5"
+                          title="Inspecter & Modifier les métadonnées"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void attemptDeleteMedia(asset)}
+                          className="admin-icon-button text-red-700 hover:bg-red-50 p-1.5"
+                          title="Supprimer l'image"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Selected Media Inspector & Edit Modal */}
+        {selectedMediaModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#002141]/60 p-4 backdrop-blur-sm overflow-y-auto">
+            <div className="relative w-full max-w-4xl border border-[#002141]/20 bg-white shadow-2xl my-8">
+              {/* Modal Top Header */}
+              <div className="flex items-center justify-between border-b border-[#002141]/15 bg-[#002141] p-5 text-white">
+                <div className="flex items-center gap-3">
+                  <ImageIcon className="h-6 w-6 text-[#AC854B]" />
+                  <div>
+                    <h2 className="text-base font-bold truncate max-w-md">{selectedMediaModal.file_name}</h2>
+                    <p className="text-xs text-[#D6BB8F]">Inspecteur & Métadonnées Supabase Storage</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedMediaModal(null)}
+                  className="p-1 text-gray-300 hover:text-white transition-colors"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="grid gap-6 p-6 md:grid-cols-2 max-h-[75vh] overflow-y-auto">
+                {/* Left Column: Visual Preview & Technical Specs */}
+                <div className="space-y-4">
+                  <div className="relative border border-[#002141]/15 bg-gray-100 overflow-hidden rounded">
+                    <img
+                      src={selectedMediaModal.public_url}
+                      alt={selectedMediaModal.alt_text || selectedMediaModal.file_name}
+                      className="w-full max-h-80 object-contain mx-auto"
+                    />
+                  </div>
+
+                  {/* Tech Details Box */}
+                  <div className="border border-[#002141]/15 bg-[#F5F3EF] p-4 text-xs space-y-2">
+                    <h4 className="font-bold text-[#002141] uppercase tracking-wider text-[11px] mb-2">Spécifications Techniques</h4>
+                    <div className="flex justify-between border-b border-[#002141]/10 pb-1">
+                      <span className="text-gray-600">Chemin Storage :</span>
+                      <span className="font-mono text-[11px] text-[#002141] truncate max-w-[180px]" title={selectedMediaModal.bucket_path}>
+                        {selectedMediaModal.bucket_path || 'products/' + selectedMediaModal.file_name}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-b border-[#002141]/10 pb-1">
+                      <span className="text-gray-600">Dimensions :</span>
+                      <span className="font-semibold text-[#002141]">
+                        {selectedMediaModal.width && selectedMediaModal.height
+                          ? `${selectedMediaModal.width} × ${selectedMediaModal.height} px`
+                          : 'Dimensions standard'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-b border-[#002141]/10 pb-1">
+                      <span className="text-gray-600">Poids du fichier :</span>
+                      <span className="font-semibold text-[#002141]">{formatBytes(selectedMediaModal.size_bytes)}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-[#002141]/10 pb-1">
+                      <span className="text-gray-600">Format MIME :</span>
+                      <span className="font-semibold text-[#002141]">{selectedMediaModal.mime_type || 'image/webp'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Date d'importation :</span>
+                      <span className="text-[#002141]">
+                        {selectedMediaModal.created_at ? new Date(selectedMediaModal.created_at).toLocaleString('fr-FR') : '—'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Public URL Field */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#002141] mb-1">URL Publique Supabase</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={selectedMediaModal.public_url}
+                        className="admin-input text-xs font-mono bg-gray-50 flex-1 truncate"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => copyUrl(selectedMediaModal.public_url)}
+                        className="admin-secondary-button py-1 px-3 text-xs flex items-center gap-1"
+                      >
+                        <Copy className="h-3.5 w-3.5" /> Copier
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Column: Editing Form & Usage List */}
+                <div className="space-y-6">
+                  {/* Metadata Edit Form */}
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      try {
+                        const tagsList = (selectedMediaModal.tags_input || '')
+                          .split(',')
+                          .map((t: string) => t.trim())
+                          .filter(Boolean);
+
+                        await adminRequest(`/media/${selectedMediaModal.id}`, {
+                          method: 'PATCH',
+                          body: {
+                            alt_text: selectedMediaModal.alt_text,
+                            folder: selectedMediaModal.folder || 'general',
+                            tags: tagsList,
+                            product_id: selectedMediaModal.product_id || null,
+                            sort_order: selectedMediaModal.sort_order || 0
+                          }
+                        });
+                        await loadTab('media');
+                        notify('Métadonnées média enregistrées avec succès.');
+                      } catch (error) {
+                        notify(error instanceof Error ? error.message : 'La mise à jour a échoué.');
+                      }
+                    }}
+                    className="border border-[#002141]/15 p-4 bg-white space-y-3"
+                  >
+                    <h4 className="font-bold text-[#002141] uppercase tracking-wider text-[11px] border-b border-[#002141]/10 pb-2 flex items-center gap-1.5">
+                      <Pencil className="h-4 w-4 text-[#AC854B]" /> Éditer les métadonnées SEO
+                    </h4>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-[#002141] mb-1">Texte alternatif (Alt Text) *</label>
+                      <input
+                        type="text"
+                        required
+                        value={selectedMediaModal.alt_text || ''}
+                        onChange={(e) =>
+                          setSelectedMediaModal((prev) => (prev ? { ...prev, alt_text: e.target.value } : null))
+                        }
+                        placeholder="Description précise pour le SEO et l'accessibilité..."
+                        className="admin-input"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-[#002141] mb-1">Dossier de classement</label>
+                      <select
+                        value={selectedMediaModal.folder || 'general'}
+                        onChange={(e) =>
+                          setSelectedMediaModal((prev) => (prev ? { ...prev, folder: e.target.value } : null))
+                        }
+                        className="admin-input"
+                      >
+                        <option value="produit">Produit</option>
+                        <option value="catégorie">Catégorie</option>
+                        <option value="éditorial">Éditorial</option>
+                        <option value="blog">Blog</option>
+                        <option value="general">Général</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-[#002141] mb-1">Tags (séparés par des virgules)</label>
+                      <input
+                        type="text"
+                        value={
+                          selectedMediaModal.tags_input !== undefined
+                            ? selectedMediaModal.tags_input
+                            : Array.isArray(selectedMediaModal.tags)
+                            ? selectedMediaModal.tags.join(', ')
+                            : String(selectedMediaModal.tags || '')
+                        }
+                        onChange={(e) =>
+                          setSelectedMediaModal((prev) => (prev ? { ...prev, tags_input: e.target.value } : null))
+                        }
+                        placeholder="Ex: bijoux, luxe, abidjan, collection"
+                        className="admin-input"
+                      />
+                    </div>
+
+                    <div className="pt-2 flex justify-end">
+                      <button type="submit" className="admin-primary-button text-xs py-2 px-4">
+                        Enregistrer les modifications
+                      </button>
+                    </div>
+                  </form>
+
+                  {/* Usage Details List */}
+                  <div className="border border-[#002141]/15 p-4 bg-white">
+                    <h4 className="font-bold text-[#002141] uppercase tracking-wider text-[11px] border-b border-[#002141]/10 pb-2 flex items-center gap-1.5">
+                      <FileText className="h-4 w-4 text-[#AC854B]" /> Emplacements d'utilisation
+                    </h4>
+
+                    {(!selectedMediaModal.usage || selectedMediaModal.usage.length === 0) ? (
+                      <p className="mt-3 text-xs text-[#3A3A3A] italic">
+                        Cette image n'est associée à aucun produit, article de blog ou page. Elle peut être supprimée en toute sécurité.
+                      </p>
+                    ) : (
+                      <ul className="mt-3 space-y-2 text-xs">
+                        {selectedMediaModal.usage.map((use: AnyRecord, idx: number) => (
+                          <li key={idx} className="flex items-center justify-between border-b border-[#002141]/10 pb-1.5">
+                            <span className="font-semibold text-[#002141]">[{use.type}] {use.label}</span>
+                            <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                              Actif
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  {/* Delete Action in Modal */}
+                  <div className="pt-2 flex justify-between items-center">
+                    <button
+                      type="button"
+                      onClick={() => void attemptDeleteMedia(selectedMediaModal)}
+                      className="bg-red-800 text-white hover:bg-red-900 px-4 py-2 text-xs font-bold transition-colors flex items-center gap-1.5"
+                    >
+                      <Trash2 className="h-4 w-4" /> Supprimer du Storage
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMediaModal(null)}
+                      className="admin-secondary-button text-xs"
+                    >
+                      Fermer
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Protected Warning Modal */}
+        {deleteWarningMedia && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#002141]/70 p-4 backdrop-blur-sm">
+            <div className="relative w-full max-w-lg border border-red-300 bg-white p-6 shadow-2xl">
+              <div className="flex items-center gap-3 text-red-800 mb-4 border-b border-red-100 pb-3">
+                <ShieldAlert className="h-7 w-7 shrink-0 text-red-700" />
+                <div>
+                  <h3 className="text-base font-bold">Suppression Bloquée · Image Utilisée</h3>
+                  <p className="text-xs text-red-700">Protection contre la cassure des liens de la boutique</p>
+                </div>
+              </div>
+
+              <p className="text-xs text-[#3A3A3A] leading-relaxed mb-4">
+                L'image <strong className="text-[#002141]">"{deleteWarningMedia.file_name}"</strong> est actuellement liée à{' '}
+                <strong className="text-[#002141]">{(deleteWarningMedia.usage || []).length} élément(s)</strong> de votre boutique. Pour préserver l'affichage du site, la suppression est temporairement bloquée.
+              </p>
+
+              <div className="mb-4 border border-red-100 bg-red-50/60 p-3 text-xs text-red-900 rounded space-y-1">
+                <p className="font-bold text-[11px] uppercase tracking-wider mb-1">Contenus utilisant ce visuel :</p>
+                {(deleteWarningMedia.usage || []).map((u: AnyRecord, i: number) => (
+                  <p key={i}>• [{u.type}] {u.label}</p>
+                ))}
+              </div>
+
+              <p className="text-[11px] text-[#3A3A3A] italic mb-6">
+                Pour débloquer la suppression, modifiez d'abord ces produits ou articles afin d'y associer un autre visuel.
+              </p>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setDeleteWarningMedia(null)}
+                  className="admin-primary-button text-xs py-2 px-4"
+                >
+                  J'ai compris
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  };
 
   const renderCoordinates = () => {
     const settings = siteSettings || { business_name: 'HERITAGE', social_links: {}, footer_notices: [] };
