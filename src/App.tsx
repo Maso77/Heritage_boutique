@@ -35,6 +35,7 @@ import { AdminAuthView } from './components/admin/AdminAuthView';
 import { AboutView } from './components/pages/AboutView';
 import { BlogView } from './components/pages/BlogView';
 import { ContactView } from './components/pages/ContactView';
+import { FaqView } from './components/pages/FaqView';
 import { LegalView } from './components/pages/LegalView';
 import { PublicContentProvider, usePublicContent, usePublicPageMeta } from './lib/public-content';
 
@@ -225,6 +226,10 @@ function AppContent() {
 
     if (currentRoute === '/contact') {
       return <ContactView navigate={navigate} />;
+    }
+
+    if (currentRoute === '/faq') {
+      return <FaqView navigate={navigate} />;
     }
 
     if (currentRoute === '/mentions-legales') {
