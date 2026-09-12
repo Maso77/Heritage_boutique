@@ -3220,7 +3220,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   };
 
   const renderAdministrators = () => {
-    const currentAdminId = adminSession?.profile?.id;
+    const currentAdminId = admin?.profile?.id || admin?.id;
 
     return (
       <>
