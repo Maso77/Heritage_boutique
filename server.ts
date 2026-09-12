@@ -720,6 +720,34 @@ app.post('/api/public/contact-messages', limitAdminRegistration, async (req: Req
   }
 });
 
+app.post('/api/public/analytics/page-view', async (req: Request, res: Response) => {
+  const path = text(req.body?.path, 200) || '/';
+  const title = text(req.body?.title, 200);
+  const product_slug = text(req.body?.product_slug, 200) || null;
+  const product_id = text(req.body?.product_id, 80) || null;
+  try {
+    const admin = getSupabaseAdmin();
+    await admin.from('page_views').insert({ path, title, product_slug, product_id });
+    res.json({ success: true });
+  } catch {
+    // Return OK silently if table doesn't exist yet
+    res.json({ success: false });
+  }
+});
+
+app.post('/api/public/analytics/wishlist', async (req: Request, res: Response) => {
+  const product_id = text(req.body?.product_id, 80);
+  const action = text(req.body?.action, 20) || 'add';
+  if (!product_id) return sendError(res, 400, 'ID produit requis.');
+  try {
+    const admin = getSupabaseAdmin();
+    await admin.from('wishlist_events').insert({ product_id, action });
+    res.json({ success: true });
+  } catch {
+    res.json({ success: false });
+  }
+});
+
 app.use('/api/admin', requireAdmin);
 
 app.get('/api/admin/session', (req: AdminRequest, res: Response) => {
@@ -741,7 +769,7 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
     // Safety wrappers so one table issue doesn't crash the entire admin portal dashboard
     const ordersResult = await admin
       .from('orders')
-      .select('id, order_number, total_xof, status, created_at')
+      .select('id, order_number, customer_name, customer_email, total_xof, status, created_at, order_items')
       .gte('created_at', from.toISOString())
       .lte('created_at', to.toISOString())
       .order('created_at', { ascending: true })
@@ -756,19 +784,32 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
 
     let productsResult = await admin
       .from('products')
-      .select('id, name, slug, stock_quantity, low_stock_threshold, stock_policy, status')
+      .select('id, name, slug, primary_image, regular_price_xof, sale_price_xof, stock_quantity, low_stock_threshold, stock_policy, status')
       .neq('status', 'archived')
       .order('stock_quantity', { ascending: true })
       .then((r) => r, (err) => ({ data: [], error: err }));
 
     if (productsResult.error) {
-      // Fallback query if low_stock_threshold or stock_policy column doesn't exist yet
       productsResult = await admin
         .from('products')
-        .select('id, name, slug, stock_quantity, status')
+        .select('id, name, slug, primary_image, regular_price_xof, sale_price_xof, stock_quantity, status')
         .neq('status', 'archived')
         .then((r) => r, (err) => ({ data: [], error: err }));
     }
+
+    const pageViewsResult = await admin
+      .from('page_views')
+      .select('id, path, title, product_slug, product_id, created_at')
+      .gte('created_at', from.toISOString())
+      .lte('created_at', to.toISOString())
+      .then((r) => r, () => ({ data: [], error: null }));
+
+    const wishlistResult = await admin
+      .from('wishlist_events')
+      .select('id, product_id, action, created_at')
+      .gte('created_at', from.toISOString())
+      .lte('created_at', to.toISOString())
+      .then((r) => r, () => ({ data: [], error: null }));
 
     const reviewsResult = await admin
       .from('product_reviews')
@@ -797,10 +838,14 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
 
     const orders = ordersResult.data || [];
     const products = productsResult.data || [];
-    const revenueOrders = orders.filter((order: any) => ['paid', 'processing', 'shipped_or_ready', 'delivered'].includes(order.status));
+    const pageViews = pageViewsResult.data || [];
+    const wishlistEvents = wishlistResult.data || [];
+
+    const revenueStatuses = ['paid', 'processing', 'shipped_or_ready', 'delivered', 'received', 'pending_payment', 'payment_pending'];
+    const revenueOrders = orders.filter((order: any) => revenueStatuses.includes(order.status));
     const revenueXOF = revenueOrders.reduce((sum, order: any) => sum + Number(order.total_xof || 0), 0);
 
-    const allStatuses = ['pending_payment', 'payment_pending', 'paid', 'processing', 'shipped_or_ready', 'delivered', 'cancelled', 'refunded', 'payment_failed'];
+    const allStatuses = ['received', 'pending_payment', 'payment_pending', 'paid', 'processing', 'shipped_or_ready', 'delivered', 'cancelled', 'refunded', 'payment_failed'];
     const statuses = Object.fromEntries(
       allStatuses
         .map((status) => [status, orders.filter((order: any) => order.status === status).length] as [string, number])
@@ -812,16 +857,76 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
       Number(product.stock_quantity || 0) <= Number(product.low_stock_threshold || 2)
     );
 
-    const points = new Map<string, { date: string; revenueXOF: number; orders: number }>();
+    // Aggregate page visits
+    const totalVisits = pageViews.length;
+    const pageCounts = new Map<string, { path: string; title: string; views: number }>();
+    const productViewCounts = new Map<string, number>();
+
+    const pathLabels: Record<string, string> = {
+      '/': 'Page d’accueil',
+      '/montres': 'Boutique — Montres',
+      '/boutique': 'Boutique',
+      '/blogs': 'Journal / Articles',
+      '/blog': 'Journal / Articles',
+      '/contact': 'Page Contact',
+      '/a-propos': 'À propos',
+      '/authenticite-provenance': 'Authenticité & Provenance',
+      '/cgv': 'Conditions Générales de Vente',
+      '/mentions-legales': 'Mentions Légales',
+      '/panier': 'Panier',
+      '/commande': 'Passation de commande',
+      '/liste-envies': 'Liste d’envies',
+      '/wishlist': 'Liste d’envies'
+    };
+
+    pageViews.forEach((view: any) => {
+      const path = view.path || '/';
+      const label = pathLabels[path] || (path.startsWith('/montres/') ? 'Fiche produit' : path);
+      const existing = pageCounts.get(path) || { path, title: view.title || label, views: 0 };
+      existing.views += 1;
+      pageCounts.set(path, existing);
+
+      if (view.product_slug) {
+        productViewCounts.set(view.product_slug, (productViewCounts.get(view.product_slug) || 0) + 1);
+      }
+    });
+
+    const topPages = [...pageCounts.values()]
+      .sort((a, b) => b.views - a.views)
+      .slice(0, 5);
+
+    const productsBySlug = new Map<string, any>(products.map((p: any) => [p.slug, p]));
+    const productsById = new Map<string, any>(products.map((p: any) => [p.id, p]));
+
+    const topProducts = [...productViewCounts.entries()]
+      .map(([slug, views]) => {
+        const product = productsBySlug.get(slug);
+        return product ? { id: product.id, name: product.name, slug: product.slug, primary_image: product.primary_image, price_xof: product.sale_price_xof ?? product.regular_price_xof, views } : null;
+      })
+      .filter(Boolean)
+      .sort((a: any, b: any) => b.views - a.views)
+      .slice(0, 5);
+
+    const wishlistAdditions = wishlistEvents.filter((e: any) => e.action !== 'remove').length;
+
+    const points = new Map<string, { date: string; revenueXOF: number; orders: number; visits: number }>();
     orders.forEach((order: any) => {
       const date = new Date(order.created_at).toISOString().slice(0, 10);
-      const point = points.get(date) || { date, revenueXOF: 0, orders: 0 };
+      const point = points.get(date) || { date, revenueXOF: 0, orders: 0, visits: 0 };
       point.orders += 1;
-      if (['paid', 'processing', 'shipped_or_ready', 'delivered'].includes(order.status)) {
+      if (revenueStatuses.includes(order.status)) {
         point.revenueXOF += Number(order.total_xof || 0);
       }
       points.set(date, point);
     });
+
+    pageViews.forEach((view: any) => {
+      const date = new Date(view.created_at).toISOString().slice(0, 10);
+      const point = points.get(date) || { date, revenueXOF: 0, orders: 0, visits: 0 };
+      point.visits += 1;
+      points.set(date, point);
+    });
+
     const chart = [...points.values()].sort((a, b) => a.date.localeCompare(b.date));
 
     res.json({
@@ -830,6 +935,8 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
         revenueXOF,
         orders: orders.length,
         averageCartXOF: revenueOrders.length ? Math.round(revenueXOF / revenueOrders.length) : 0,
+        totalVisits,
+        wishlistCount: wishlistAdditions,
         lowStock: lowStockProducts.length,
         pendingReviews: reviewsResult.count || 0,
         unreadMessages,
@@ -837,6 +944,8 @@ app.get('/api/admin/dashboard', async (req: AdminRequest, res: Response) => {
         statuses
       },
       chart,
+      topPages,
+      topProducts,
       recentOrders: recentResult.data || [],
       lowStockProducts: lowStockProducts.slice(0, 8).map((product: any) => ({
         ...product,

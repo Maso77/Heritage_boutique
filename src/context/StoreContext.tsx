@@ -314,6 +314,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const toggleWishlist = (product: Product) => {
     setWishlist((prev) => {
       const exists = prev.includes(product.id);
+      void fetch('/api/public/analytics/wishlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product_id: product.id, action: exists ? 'remove' : 'add' })
+      }).catch(() => undefined);
+
       if (exists) {
         setCartToast(`« ${product.name} » a été retiré de votre liste d'envies.`);
         setTimeout(() => setCartToast(null), 3500);
@@ -329,6 +335,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const addToWishlist = (product: Product) => {
     setWishlist((prev) => {
       if (!prev.includes(product.id)) {
+        void fetch('/api/public/analytics/wishlist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ product_id: product.id, action: 'add' })
+        }).catch(() => undefined);
+
         setCartToast(`« ${product.name} » a été ajouté à votre liste d'envies.`);
         setTimeout(() => setCartToast(null), 3500);
         return [...prev, product.id];

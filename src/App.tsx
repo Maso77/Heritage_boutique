@@ -53,6 +53,18 @@ function AppContent() {
           : currentRoute.replace(/^\//, '') || 'accueil';
   usePublicPageMeta(pageKey);
 
+  // Track page views for analytics
+  useEffect(() => {
+    if (!currentRoute.startsWith('/admin')) {
+      const product_slug = currentRoute.startsWith('/montres/') ? currentRoute.replace('/montres/', '') : undefined;
+      void fetch('/api/public/analytics/page-view', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: currentRoute, title: document.title, product_slug })
+      }).catch(() => undefined);
+    }
+  }, [currentRoute]);
+
   // Sync route with browser history
   useEffect(() => {
     const handlePopState = () => {

@@ -712,27 +712,396 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     const chart = dashboard?.chart || [];
     const maxRevenue = Math.max(...chart.map((point: AnyRecord) => Number(point.revenueXOF || 0)), 1);
     const statuses = dashboardTotals.statuses || {};
+    const topPages = dashboard?.topPages || [];
+    const topProducts = dashboard?.topProducts || [];
+    const recentOrders = dashboard?.recentOrders || [];
+    const lowStockProds = dashboard?.lowStockProducts || [];
+
     return <>
-      <PanelHeader eyebrow="Pilotage" title="Tableau de bord" description="Une vue d’ensemble calculée depuis Supabase : activité commerciale, commandes, stock et contenus à traiter." action={<button type="button" onClick={() => void loadTab('dashboard')} className="admin-secondary-button"><RefreshCw className="h-4 w-4" /> Actualiser</button>} />
-      <div className="mb-6 flex flex-wrap items-end gap-3 border border-[#002141]/12 bg-white p-4">
-        <label className="text-xs font-semibold text-[#002141]">Période<select value={dashboardPeriod} onChange={(event) => setDashboardPeriod(event.target.value as typeof dashboardPeriod)} className="admin-input mt-1 min-w-40"><option value="day">Aujourd’hui</option><option value="week">7 derniers jours</option><option value="month">30 derniers jours</option><option value="custom">Personnalisée</option></select></label>
-        {dashboardPeriod === 'custom' && <><label className="text-xs font-semibold text-[#002141]">Du<input type="date" value={dashboardCustomFrom} onChange={(event) => setDashboardCustomFrom(event.target.value)} className="admin-input mt-1" /></label><label className="text-xs font-semibold text-[#002141]">Au<input type="date" value={dashboardCustomTo} onChange={(event) => setDashboardCustomTo(event.target.value)} className="admin-input mt-1" /></label></>}
-        <button type="button" onClick={() => void loadTab('dashboard')} className="admin-primary-button">Appliquer</button>
+      <PanelHeader
+        eyebrow="Pilotage analytique Supabase"
+        title="Tableau de bord"
+        description="Vue synthétique en temps réel de votre activité commerciale, trafic, comportement des visiteurs, état des stocks et éléments à modérer."
+        action={
+          <button type="button" onClick={() => void loadTab('dashboard')} className="admin-secondary-button">
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Actualiser
+          </button>
+        }
+      />
+
+      {/* Barre de filtres de période */}
+      <div className="mb-6 flex flex-wrap items-end gap-3 border border-[#002141]/12 bg-white p-4 shadow-sm">
+        <label className="text-xs font-semibold text-[#002141]">
+          Période d’analyse
+          <select
+            value={dashboardPeriod}
+            onChange={(event) => setDashboardPeriod(event.target.value as typeof dashboardPeriod)}
+            className="admin-input mt-1 min-w-44"
+          >
+            <option value="day">Aujourd’hui</option>
+            <option value="week">7 derniers jours</option>
+            <option value="month">30 derniers jours</option>
+            <option value="custom">Période personnalisée</option>
+          </select>
+        </label>
+        {dashboardPeriod === 'custom' && (
+          <>
+            <label className="text-xs font-semibold text-[#002141]">
+              Du
+              <input type="date" value={dashboardCustomFrom} onChange={(event) => setDashboardCustomFrom(event.target.value)} className="admin-input mt-1" />
+            </label>
+            <label className="text-xs font-semibold text-[#002141]">
+              Au
+              <input type="date" value={dashboardCustomTo} onChange={(event) => setDashboardCustomTo(event.target.value)} className="admin-input mt-1" />
+            </label>
+          </>
+        )}
+        <button type="button" onClick={() => void loadTab('dashboard')} className="admin-primary-button">
+          Appliquer
+        </button>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+      {/* Grille de KPIs réels */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
           ['Chiffre d’affaires', formatXOF(dashboardTotals.revenueXOF), 'Commandes encaissées sur la période'],
-          ['Commandes', String(dashboardTotals.orders || 0), `${Object.values(statuses).reduce((sum: number, count: any) => sum + Number(count || 0), 0)} enregistrée(s)`],
-          ['Panier moyen', formatXOF(dashboardTotals.averageCartXOF), 'Sur les commandes encaissées'],
-          ['Stock à surveiller', String(dashboardTotals.lowStock || 0), 'Produits au seuil ou épuisés']
-        ].map(([label, value, note]) => <article key={label} className="border border-[#002141]/12 bg-white p-5 shadow-sm"><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#3A3A3A]">{label}</p><p className="font-playfair mt-4 text-3xl font-semibold text-[#002141]">{value}</p><p className="mt-3 text-sm text-[#3A3A3A]">{note}</p></article>)}
+          ['Panier moyen', formatXOF(dashboardTotals.averageCartXOF), 'Calculé sur les commandes validées'],
+          ['Commandes', String(dashboardTotals.orders || 0), 'Total enregistrées sur la période'],
+          ['Visites de la boutique', String(dashboardTotals.totalVisits || 0), 'Pages vues enregistrées par les visiteurs'],
+          ['Produits en favoris', String(dashboardTotals.wishlistCount || 0), 'Ajouts à la liste d’envies clients'],
+          ['Stock à surveiller', String(dashboardTotals.lowStock || 0), 'Produits au seuil ou épuisés'],
+          ['Nouveaux clients', String(dashboardTotals.newCustomers || 0), 'Nouveaux comptes créés'],
+          ['Éléments à traiter', String((dashboardTotals.pendingReviews || 0) + (dashboardTotals.unreadMessages || 0)), 'Avis en attente & messages non lus']
+        ].map(([label, value, note]) => (
+          <article key={label} className="border border-[#002141]/12 bg-white p-5 shadow-sm transition-all hover:border-[#AC854B]/50">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#3A3A3A]">{label}</p>
+            <p className="font-playfair mt-3 text-3xl font-semibold text-[#002141]">{value}</p>
+            <p className="mt-2 text-xs text-[#3A3A3A]">{note}</p>
+          </article>
+        ))}
       </div>
-      {Object.keys(statuses).length > 0 && <section className="mt-6 border border-[#002141]/12 bg-white p-5"><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#3A3A3A]">Répartition des commandes par statut</p><div className="mt-4 flex flex-wrap gap-3">{Object.entries(statuses).map(([status, count]) => <button type="button" key={status} onClick={() => { setOrderStatusFilter(status); selectTab('orders'); }} className="border border-[#002141]/15 px-3 py-2 text-left text-xs hover:border-[#AC854B]"><strong className="text-[#AC854B]">{Number(count)}</strong> <span className="ml-1 text-[#002141]">{statusLabel[status] || status}</span></button>)}</div></section>}
-      <div className="mt-7 grid gap-6 xl:grid-cols-[1.4fr_1fr]">
-        <section className="border border-[#002141]/12 bg-white p-6"><h2 className="font-playfair text-2xl font-semibold">Évolution de l’activité</h2>{chart.length === 0 ? <p className="mt-8 text-sm text-[#3A3A3A]">Aucune commande sur cette période.</p> : <div className="mt-6 flex h-48 items-end gap-2">{chart.map((point: AnyRecord) => <div key={point.date} className="group flex min-w-0 flex-1 flex-col items-center justify-end gap-2"><span className="hidden rounded bg-[#002141] px-2 py-1 text-[10px] text-white group-hover:block">{formatXOF(point.revenueXOF)} · {point.orders} cmd.</span><div className="w-full bg-[#AC854B]/85 transition hover:bg-[#002141]" style={{ height: `${Math.max(5, Math.round((Number(point.revenueXOF || 0) / maxRevenue) * 100))}%` }} /><span className="text-[9px] text-[#3A3A3A]">{String(point.date).slice(5)}</span></div>)}</div>}</section>
-        <section className="border border-[#002141]/12 bg-[#002141] p-6 text-[#FAF9F7]"><p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#D6BB8F]">Contenu à traiter</p><div className="mt-6 space-y-4"><button type="button" onClick={() => selectTab('reviews')} className="block text-left hover:text-[#D6BB8F]"><strong className="font-playfair text-3xl text-[#D6BB8F]">{dashboardTotals.pendingReviews || 0}</strong><span className="ml-3 text-sm">avis en attente</span></button><button type="button" onClick={() => selectTab('users')} className="block text-left hover:text-[#D6BB8F]"><strong className="font-playfair text-3xl text-[#D6BB8F]">{dashboardTotals.newCustomers || 0}</strong><span className="ml-3 text-sm">nouveaux utilisateurs</span></button><button type="button" onClick={() => selectTab('messages')} className="block text-left hover:text-[#D6BB8F]"><strong className="font-playfair text-3xl text-[#D6BB8F]">{dashboardTotals.unreadMessages || 0}</strong><span className="ml-3 text-sm">messages non lus</span></button></div></section>
+
+      {/* Répartition des commandes par statut */}
+      {Object.keys(statuses).length > 0 && (
+        <section className="mt-6 border border-[#002141]/12 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#3A3A3A]">Commandes par statut</p>
+            <span className="text-xs text-[#3A3A3A]">Cliquez sur un statut pour afficher les commandes correspondantes</span>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2.5">
+            {Object.entries(statuses).map(([status, count]) => {
+              const countNum = Number(count);
+              return (
+                <button
+                  type="button"
+                  key={status}
+                  onClick={() => { setOrderStatusFilter(status); selectTab('orders'); }}
+                  className="flex items-center gap-2 border border-[#002141]/15 bg-[#FAF9F7] px-3.5 py-2 text-left text-xs transition hover:border-[#AC854B] hover:bg-white"
+                >
+                  <span className="font-bold text-[#AC854B]">{countNum}</span>
+                  <span className="text-[#002141]">{statusLabel[status] || status}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Graphique et bloc Contenu à traiter */}
+      <div className="mt-7 grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+        <section className="border border-[#002141]/12 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between border-b border-[#002141]/10 pb-4">
+            <div>
+              <h2 className="font-playfair text-xl font-semibold text-[#002141]">Évolution de l’activité</h2>
+              <p className="text-xs text-[#3A3A3A]">Chiffre d’affaires et commandes quotidiennes</p>
+            </div>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 bg-[#AC854B]" /> CA (FCFA)</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 bg-[#002141]" /> Visites</span>
+            </div>
+          </div>
+
+          {chart.length === 0 || chart.every((p: AnyRecord) => !p.revenueXOF && !p.orders && !p.visits) ? (
+            <div className="my-12 flex flex-col items-center justify-center text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#002141]/5 text-[#002141]">
+                <BarChart3 className="h-6 w-6" />
+              </div>
+              <p className="mt-3 text-sm font-semibold text-[#002141]">Aucune donnée sur cette période</p>
+              <p className="mt-1 max-w-sm text-xs text-[#3A3A3A]">
+                Aucune commande ni visite enregistrée sur la période sélectionnée. Modifiez la période ci-dessus ou effectuez un test.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-6 flex h-52 items-end gap-2 overflow-x-auto pb-2">
+              {chart.map((point: AnyRecord) => {
+                const revHeight = maxRevenue > 0 ? Math.max(6, Math.round((Number(point.revenueXOF || 0) / maxRevenue) * 100)) : 0;
+                return (
+                  <div key={point.date} className="group flex min-w-8 flex-1 flex-col items-center justify-end gap-1.5">
+                    <div className="hidden rounded bg-[#002141] px-2 py-1 text-center text-[10px] text-white shadow group-hover:block">
+                      <p className="font-semibold">{formatXOF(point.revenueXOF)}</p>
+                      <p className="text-[9px] text-[#D6BB8F]">{point.orders} cmd. · {point.visits} visites</p>
+                    </div>
+                    <div className="flex w-full items-end gap-0.5" style={{ height: '140px' }}>
+                      <div
+                        className="w-full bg-[#AC854B] transition-all hover:bg-[#8F6A33]"
+                        style={{ height: `${revHeight}%` }}
+                        title={`${formatXOF(point.revenueXOF)} - ${point.orders} commande(s)`}
+                      />
+                    </div>
+                    <span className="text-[9px] text-[#3A3A3A]">{String(point.date).slice(5)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* Bloc "Contenu à traiter" */}
+        <section className="border border-[#002141]/12 bg-[#002141] p-6 text-[#FAF9F7] shadow-sm">
+          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#D6BB8F]">Contenu à traiter</p>
+          <p className="mt-1 text-xs text-[#FAF9F7]/70">Actions requises en attente dans le portail</p>
+
+          <div className="mt-6 space-y-4">
+            <button
+              type="button"
+              onClick={() => selectTab('reviews')}
+              className="group flex w-full items-center justify-between rounded border border-[#D6BB8F]/20 bg-white/5 p-4 text-left transition hover:border-[#D6BB8F] hover:bg-white/10"
+            >
+              <div>
+                <strong className="font-playfair text-3xl font-semibold text-[#D6BB8F]">
+                  {dashboardTotals.pendingReviews || 0}
+                </strong>
+                <p className="text-xs font-medium text-[#FAF9F7]">Avis clients en attente de modération</p>
+              </div>
+              <span className="text-xs text-[#D6BB8F] opacity-0 transition group-hover:opacity-100">Modérer &rarr;</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => selectTab('messages')}
+              className="group flex w-full items-center justify-between rounded border border-[#D6BB8F]/20 bg-white/5 p-4 text-left transition hover:border-[#D6BB8F] hover:bg-white/10"
+            >
+              <div>
+                <strong className="font-playfair text-3xl font-semibold text-[#D6BB8F]">
+                  {dashboardTotals.unreadMessages || 0}
+                </strong>
+                <p className="text-xs font-medium text-[#FAF9F7]">Messages de contact non lus</p>
+              </div>
+              <span className="text-xs text-[#D6BB8F] opacity-0 transition group-hover:opacity-100">Consulter &rarr;</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => selectTab('users')}
+              className="group flex w-full items-center justify-between rounded border border-[#D6BB8F]/20 bg-white/5 p-4 text-left transition hover:border-[#D6BB8F] hover:bg-white/10"
+            >
+              <div>
+                <strong className="font-playfair text-3xl font-semibold text-[#D6BB8F]">
+                  {dashboardTotals.newCustomers || 0}
+                </strong>
+                <p className="text-xs font-medium text-[#FAF9F7]">Nouveaux comptes clients inscrits</p>
+              </div>
+              <span className="text-xs text-[#D6BB8F] opacity-0 transition group-hover:opacity-100">Voir clients &rarr;</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => selectTab('products')}
+              className="group flex w-full items-center justify-between rounded border border-[#D6BB8F]/20 bg-white/5 p-4 text-left transition hover:border-[#D6BB8F] hover:bg-white/10"
+            >
+              <div>
+                <strong className="font-playfair text-3xl font-semibold text-[#D6BB8F]">
+                  {dashboardTotals.lowStock || 0}
+                </strong>
+                <p className="text-xs font-medium text-[#FAF9F7]">Produits en stock faible / rupture</p>
+              </div>
+              <span className="text-xs text-[#D6BB8F] opacity-0 transition group-hover:opacity-100">Réapprovisionner &rarr;</span>
+            </button>
+          </div>
+        </section>
       </div>
-      <div className="mt-7 grid gap-6 xl:grid-cols-2"><section className="border border-[#002141]/12 bg-white p-6"><h2 className="font-playfair text-2xl font-semibold">Dernières commandes</h2>{(dashboard?.recentOrders || []).length === 0 ? <p className="mt-8 text-sm text-[#3A3A3A]">Aucune commande enregistrée pour le moment.</p> : <div className="mt-5 divide-y divide-[#002141]/10">{dashboard.recentOrders.map((order: AnyRecord) => <button key={order.id} type="button" onClick={() => selectTab('orders')} className="flex w-full justify-between gap-4 py-4 text-left text-sm hover:text-[#AC854B]"><span>{order.order_number || order.id}</span><span>{formatXOF(order.total_xof)}</span><span>{statusLabel[order.status] || order.status}</span></button>)}</div>}</section><section className="border border-[#002141]/12 bg-white p-6"><h2 className="font-playfair text-2xl font-semibold">Stock faible ou épuisé</h2>{(dashboard?.lowStockProducts || []).length === 0 ? <p className="mt-8 text-sm text-[#3A3A3A]">Aucun produit à surveiller.</p> : <div className="mt-5 divide-y divide-[#002141]/10">{dashboard.lowStockProducts.map((product: AnyRecord) => <button key={product.id} type="button" onClick={() => selectTab('products')} className="flex w-full justify-between gap-4 py-4 text-left text-sm hover:text-[#AC854B]"><span>{product.name}</span><span>{product.stock_quantity} · {product.stock_status}</span></button>)}</div>}</section></div>
+
+      {/* Top Pages & Top Produits */}
+      <div className="mt-7 grid gap-6 xl:grid-cols-2">
+        {/* Pages les plus visitées */}
+        <section className="border border-[#002141]/12 bg-white p-6 shadow-sm">
+          <h2 className="font-playfair text-xl font-semibold text-[#002141]">Pages les plus visitées</h2>
+          <p className="text-xs text-[#3A3A3A]">Audience par rubrique du site public</p>
+
+          {topPages.length === 0 ? (
+            <div className="py-10 text-center">
+              <p className="text-sm text-[#3A3A3A]">Aucune visite enregistrée sur cette période.</p>
+              <p className="mt-1 text-xs text-[#3A3A3A]/70">Naviguez sur le site public pour enregistrer du trafic en direct.</p>
+            </div>
+          ) : (
+            <div className="mt-4 divide-y divide-[#002141]/10">
+              {topPages.map((page: AnyRecord) => (
+                <div key={page.path} className="flex items-center justify-between py-3 text-sm">
+                  <div>
+                    <p className="font-medium text-[#002141]">{page.title || page.path}</p>
+                    <p className="text-xs text-[#3A3A3A]">{page.path}</p>
+                  </div>
+                  <span className="rounded bg-[#002141]/5 px-2.5 py-1 text-xs font-bold text-[#002141]">
+                    {page.views} visite(s)
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Produits les plus consultés */}
+        <section className="border border-[#002141]/12 bg-white p-6 shadow-sm">
+          <h2 className="font-playfair text-xl font-semibold text-[#002141]">Produits les plus consultés</h2>
+          <p className="text-xs text-[#3A3A3A]">Fiches produit générant le plus d’intérêt</p>
+
+          {topProducts.length === 0 ? (
+            <div className="py-10 text-center">
+              <p className="text-sm text-[#3A3A3A]">Aucun produit consulté sur cette période.</p>
+              <p className="mt-1 text-xs text-[#3A3A3A]/70">Les consultations de fiches produit s’afficheront ici.</p>
+            </div>
+          ) : (
+            <div className="mt-4 divide-y divide-[#002141]/10">
+              {topProducts.map((item: AnyRecord) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  onClick={() => {
+                    const prod = products.find((p) => p.id === item.id);
+                    if (prod) {
+                      setEditingProduct(prod);
+                      setProductForm(prod);
+                      selectTab('products');
+                    }
+                  }}
+                  className="flex w-full items-center justify-between py-3 text-left hover:text-[#AC854B]"
+                >
+                  <div className="flex items-center gap-3">
+                    {item.primary_image ? (
+                      <img src={item.primary_image} alt="" className="h-10 w-10 border border-[#002141]/10 object-cover" />
+                    ) : (
+                      <div className="flex h-10 w-10 items-center justify-center bg-[#002141]/5 text-xs font-bold text-[#002141]">N/A</div>
+                    )}
+                    <div>
+                      <p className="font-medium text-[#002141]">{item.name}</p>
+                      <p className="text-xs text-[#AC854B]">{formatXOF(item.price_xof)}</p>
+                    </div>
+                  </div>
+                  <span className="rounded bg-[#002141]/5 px-2.5 py-1 text-xs font-bold text-[#002141]">
+                    {item.views} vue(s)
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      {/* Dernières commandes & Stock faible */}
+      <div className="mt-7 grid gap-6 xl:grid-cols-2">
+        {/* Dernières commandes */}
+        <section className="border border-[#002141]/12 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between border-b border-[#002141]/10 pb-3">
+            <h2 className="font-playfair text-xl font-semibold text-[#002141]">Dernières commandes</h2>
+            <button
+              type="button"
+              onClick={() => selectTab('orders')}
+              className="text-xs font-medium text-[#AC854B] hover:underline"
+            >
+              Voir tout &rarr;
+            </button>
+          </div>
+
+          {recentOrders.length === 0 ? (
+            <p className="mt-8 py-6 text-center text-sm text-[#3A3A3A]">Aucune commande enregistrée pour le moment.</p>
+          ) : (
+            <div className="mt-3 divide-y divide-[#002141]/10">
+              {recentOrders.map((order: AnyRecord) => (
+                <button
+                  key={order.id}
+                  type="button"
+                  onClick={() => {
+                    setOrderSearch(order.order_number || order.id);
+                    selectTab('orders');
+                  }}
+                  className="flex w-full items-center justify-between px-2 py-3.5 text-left text-sm transition hover:bg-[#FAF9F7]"
+                >
+                  <div>
+                    <p className="font-semibold text-[#002141]">{order.order_number || order.id}</p>
+                    <p className="text-xs text-[#3A3A3A]">{order.customer_name || 'Client'}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-[#002141]">{formatXOF(order.total_xof)}</p>
+                    <span className="mt-0.5 inline-block text-xs text-[#AC854B]">
+                      {statusLabel[order.status] || order.status}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Stock faible ou épuisé */}
+        <section className="border border-[#002141]/12 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between border-b border-[#002141]/10 pb-3">
+            <h2 className="font-playfair text-xl font-semibold text-[#002141]">Stock faible ou épuisé</h2>
+            <button
+              type="button"
+              onClick={() => selectTab('products')}
+              className="text-xs font-medium text-[#AC854B] hover:underline"
+            >
+              Gérer le catalogue &rarr;
+            </button>
+          </div>
+
+          {lowStockProds.length === 0 ? (
+            <p className="mt-8 py-6 text-center text-sm text-[#3A3A3A]">
+              Tous vos produits disposent d'un niveau de stock suffisant.
+            </p>
+          ) : (
+            <div className="mt-3 divide-y divide-[#002141]/10">
+              {lowStockProds.map((product: AnyRecord) => {
+                const stock = Number(product.stock_quantity || 0);
+                const isOutOfStock = stock <= 0;
+                return (
+                  <button
+                    key={product.id}
+                    type="button"
+                    onClick={() => {
+                      setEditingProduct(product);
+                      setProductForm(product);
+                      selectTab('products');
+                    }}
+                    className="flex w-full items-center justify-between px-2 py-3.5 text-left text-sm transition hover:bg-[#FAF9F7]"
+                  >
+                    <div className="flex items-center gap-3">
+                      {product.primary_image ? (
+                        <img src={product.primary_image} alt="" className="h-9 w-9 border border-[#002141]/10 object-cover" />
+                      ) : (
+                        <div className="flex h-9 w-9 items-center justify-center bg-[#002141]/5 text-xs font-bold text-[#002141]">N/A</div>
+                      )}
+                      <div>
+                        <p className="font-medium text-[#002141]">{product.name}</p>
+                        <p className="text-xs text-[#3A3A3A]">Réf: {product.reference || product.slug}</p>
+                      </div>
+                    </div>
+                    <span
+                      className={`rounded px-2.5 py-1 text-xs font-bold ${
+                        isOutOfStock
+                          ? 'border border-red-200 bg-red-100 text-red-800'
+                          : 'border border-amber-200 bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {isOutOfStock ? 'Épuisé (0)' : `Stock : ${stock}`}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      </div>
     </>;
   };
 
