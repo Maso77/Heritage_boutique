@@ -271,7 +271,9 @@ export async function syncOrderToSupabase(order: Order, userId?: string) {
       total_xof: order.totalXOF,
       payment_method: order.paymentMethod,
       payment_reference: order.paymentReference || null,
-      status_history: order.statusHistory
+      status_history: order.statusHistory,
+      order_items: itemsPayload,
+      created_at: order.createdAt
     });
 
     if (orderError) {

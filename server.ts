@@ -1326,26 +1326,90 @@ app.post('/api/admin/products/:id/stock-movements', async (req: AdminRequest, re
 
 app.get('/api/admin/orders', async (_req: AdminRequest, res: Response) => {
   try {
-    const { data, error } = await getSupabaseAdmin()
+    const admin = getSupabaseAdmin();
+    let ordersList: any[] = [];
+
+    // Tenter avec la relation order_items(*)
+    const relational = await admin
       .from('orders')
       .select('*, order_items(*)')
       .order('created_at', { ascending: false });
-    if (error) throw error;
-    res.json(data || []);
-  } catch {
+
+    if (!relational.error && Array.isArray(relational.data)) {
+      ordersList = relational.data;
+    } else {
+      // Fallback si la relation n'est pas mise en cache par PostgREST
+      const plain = await admin
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (plain.error) {
+        console.error('[HERITAGE Admin Orders Error]', plain.error);
+        throw plain.error;
+      }
+      ordersList = plain.data || [];
+    }
+
+    // Normalisation des articles de commande
+    const formattedOrders = ordersList.map((order: any) => {
+      let items = order.order_items;
+      if (typeof items === 'string') {
+        try { items = JSON.parse(items); } catch { items = []; }
+      }
+      if (!Array.isArray(items) || items.length === 0) {
+        if (Array.isArray(order.items)) items = order.items;
+      }
+      if (!Array.isArray(items)) items = [];
+
+      return {
+        ...order,
+        order_items: items,
+        items: items
+      };
+    });
+
+    res.json(formattedOrders);
+  } catch (err: any) {
+    console.error('Error fetching admin orders:', err);
     sendError(res, 503, 'Les commandes sont indisponibles.');
   }
 });
 
 app.get('/api/admin/orders/:id', async (req: AdminRequest, res: Response) => {
   try {
-    const { data, error } = await getSupabaseAdmin()
+    const admin = getSupabaseAdmin();
+    let orderData: any = null;
+
+    const relational = await admin
       .from('orders')
       .select('*, order_items(*)')
       .eq('id', req.params.id)
       .single();
-    if (error) throw error;
-    res.json(data);
+
+    if (!relational.error && relational.data) {
+      orderData = relational.data;
+    } else {
+      const plain = await admin
+        .from('orders')
+        .select('*')
+        .eq('id', req.params.id)
+        .single();
+
+      if (plain.error) throw plain.error;
+      orderData = plain.data;
+    }
+
+    let items = orderData.order_items;
+    if (typeof items === 'string') {
+      try { items = JSON.parse(items); } catch { items = []; }
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      if (Array.isArray(orderData.items)) items = orderData.items;
+    }
+    if (!Array.isArray(items)) items = [];
+
+    res.json({ ...orderData, order_items: items, items });
   } catch {
     sendError(res, 404, 'Commande introuvable.');
   }
