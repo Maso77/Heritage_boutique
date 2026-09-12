@@ -181,16 +181,83 @@ export async function fetchCurrentSessionProfile(): Promise<UserProfile | null> 
  */
 export async function syncOrderToSupabase(order: Order, userId?: string) {
   try {
+    let currentUserId = userId || null;
+    if (!currentUserId) {
+      try {
+        const { data: authData } = await supabase.auth.getUser();
+        currentUserId = authData?.user?.id || null;
+      } catch {
+        // Ignore auth error
+      }
+    }
+
+    const itemsPayload = order.items.map((item) => ({
+      product_id: item.product.id,
+      product_sku: item.product.sku,
+      product_name: item.product.name,
+      product_reference: item.product.reference || item.product.sku,
+      product_ref: item.product.reference || item.product.sku,
+      quantity: item.quantity,
+      price_xof: item.product.priceXOF,
+      unit_price_xof: item.product.priceXOF,
+      image_url: item.product.primaryImage
+    }));
+
     const orderPayload = {
       id: order.id,
       order_number: order.orderNumber,
-      user_id: userId || null,
+      user_id: currentUserId,
       customer_name: order.customer.fullName,
       customer_email: order.customer.email,
       customer_phone: order.customer.phone,
       customer_commune: order.customer.commune,
       customer_delivery_address: order.customer.deliveryAddress,
       customer_notes: order.customer.notes || null,
+      delivery_address: order.customer.deliveryAddress,
+      shipping_address: order.customer.deliveryAddress,
+      commune: order.customer.commune,
+      notes: order.customer.notes || null,
+      delivery_mode: order.customer.deliveryMode,
+      status: order.status,
+      subtotal_xof: order.subtotalXOF,
+      delivery_cost_xof: order.deliveryCostXOF,
+      total_xof: order.totalXOF,
+      payment_method: order.paymentMethod,
+      payment_reference: order.paymentReference || null,
+      status_history: order.statusHistory,
+      created_at: order.createdAt,
+      items: itemsPayload
+    };
+
+    // 1. Tenter l'envoi vers l'API serveur publique (qui utilise la clé d'administration Supabase)
+    try {
+      const res = await fetch('/api/public/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orderPayload)
+      });
+      if (res.ok) {
+        return { success: true };
+      }
+    } catch {
+      // Ignorer l'erreur réseau et tenter le fallback direct
+    }
+
+    // 2. Fallback direct client Supabase
+    const { error: orderError } = await supabase.from('orders').upsert({
+      id: order.id,
+      order_number: order.orderNumber,
+      user_id: currentUserId,
+      customer_name: order.customer.fullName,
+      customer_email: order.customer.email,
+      customer_phone: order.customer.phone,
+      customer_commune: order.customer.commune,
+      customer_delivery_address: order.customer.deliveryAddress,
+      customer_notes: order.customer.notes || null,
+      delivery_address: order.customer.deliveryAddress,
+      shipping_address: order.customer.deliveryAddress,
+      commune: order.customer.commune,
+      notes: order.customer.notes || null,
       delivery_mode: order.customer.deliveryMode,
       status: order.status,
       subtotal_xof: order.subtotalXOF,
@@ -199,34 +266,31 @@ export async function syncOrderToSupabase(order: Order, userId?: string) {
       payment_method: order.paymentMethod,
       payment_reference: order.paymentReference || null,
       status_history: order.statusHistory
-    };
-
-    const { error: orderError } = await supabase.from('orders').upsert(orderPayload);
+    });
 
     if (orderError) {
-      console.warn('Orders table non disponible dans Supabase:', orderError.message);
+      console.warn('Erreur fallback direct Supabase orders:', orderError.message);
       return { success: false, error: orderError };
     }
 
-    // Insérer les items commandés
-    const itemsPayload = order.items.map((item) => ({
+    const itemsForDirect = order.items.map((item) => ({
       order_id: order.id,
       product_id: item.product.id,
       product_sku: item.product.sku,
       product_name: item.product.name,
-      product_reference: item.product.reference,
+      product_reference: item.product.reference || item.product.sku,
       quantity: item.quantity,
       price_xof: item.product.priceXOF,
       image_url: item.product.primaryImage
     }));
 
-    if (itemsPayload.length > 0) {
-      await supabase.from('order_items').insert(itemsPayload);
+    if (itemsForDirect.length > 0) {
+      await supabase.from('order_items').insert(itemsForDirect);
     }
 
     return { success: true };
   } catch (e: any) {
-    console.warn('Synchronisation commande Supabase ignorée:', e.message);
+    console.warn('Synchronisation commande Supabase ignorée:', e?.message || e);
     return { success: false, error: e };
   }
 }
@@ -234,18 +298,19 @@ export async function syncOrderToSupabase(order: Order, userId?: string) {
 /**
  * Récupération de l'historique des commandes d'un client
  */
-export async function fetchUserOrdersFromSupabase(email?: string, phone?: string): Promise<Order[]> {
+export async function fetchUserOrdersFromSupabase(email?: string, phone?: string, userId?: string): Promise<Order[]> {
   try {
-    if (!email && !phone) return [];
+    if (!email && !phone && !userId) return [];
 
     let query = supabase.from('orders').select('*, order_items(*)');
 
-    if (email && phone) {
-      query = query.or(`customer_email.eq.${email},customer_phone.eq.${phone}`);
-    } else if (email) {
-      query = query.eq('customer_email', email);
-    } else if (phone) {
-      query = query.eq('customer_phone', phone);
+    const filters: string[] = [];
+    if (userId) filters.push(`user_id.eq.${userId}`);
+    if (email) filters.push(`customer_email.eq.${email}`);
+    if (phone) filters.push(`customer_phone.eq.${phone}`);
+
+    if (filters.length > 0) {
+      query = query.or(filters.join(','));
     }
 
     const { data, error } = await query.order('created_at', { ascending: false });
