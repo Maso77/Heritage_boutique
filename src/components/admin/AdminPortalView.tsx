@@ -381,13 +381,27 @@ const readObject = (value: unknown): Record<string, string> => {
 
 function ProductStructuredFields({ form, onChange }: { form: AnyRecord; onChange: (field: string, value: string) => void }) {
   const colors = readArray(form.colors).map(String);
-  const attributes = Object.entries(readObject(form.attributes));
+  const attributeRowId = useRef(Object.keys(readObject(form.attributes)).length);
+  const [attributeRows, setAttributeRows] = useState(() =>
+    Object.entries(readObject(form.attributes)).map(([key, value], index) => ({ id: `attribute-${index}`, key, value }))
+  );
   const variants = readArray(form.variants);
   const faqs = readArray(form.faq);
-  const saveAttributes = (entries: Array<[string, string]>) => onChange('attributes', JSON.stringify(Object.fromEntries(entries.filter(([key]) => key.trim()))));
+  const createAttributeRow = (key = '', value = '') => ({
+    id: `attribute-${attributeRowId.current++}`,
+    key,
+    value
+  });
+  const saveAttributes = (rows: Array<{ id: string; key: string; value: string }>) => {
+    setAttributeRows(rows);
+    onChange(
+      'attributes',
+      JSON.stringify(Object.fromEntries(rows.filter((row) => row.key.trim()).map((row) => [row.key.trim(), row.value])))
+    );
+  };
 
   const loadHorlogerieTemplate = () => {
-    const template: Array<[string, string]> = [
+    const template = [
       ['diamètre', '40 mm'],
       ['boîtier', 'Acier inoxydable 316L'],
       ['verre', 'Saphir inrayable avec traitement anti-reflet'],
@@ -397,29 +411,29 @@ function ProductStructuredFields({ form, onChange }: { form: AnyRecord; onChange
       ['étanchéité', '10 bar (100 m / 330 ft)'],
       ['fond de boîte', 'Transparent en verre saphir']
     ];
-    saveAttributes(template);
+    saveAttributes(template.map(([key, value]) => createAttributeRow(key, value)));
   };
 
   const loadParfumsTemplate = () => {
-    const template: Array<[string, string]> = [
+    const template = [
       ['notes de tête', 'Bergamote, Poivre noir'],
       ['notes de cœur', 'Iris, Jasmin d’Égypte'],
       ['notes de fond', 'Bois de santal, Ambre, Vanille'],
       ['contenance', '100 ml / 3.4 fl. oz.'],
       ['famille olfactive', 'Boisé Épicé Premium']
     ];
-    saveAttributes(template);
+    saveAttributes(template.map(([key, value]) => createAttributeRow(key, value)));
   };
 
   const loadLunettesTemplate = () => {
-    const template: Array<[string, string]> = [
+    const template = [
       ['monture', 'Acétate de cellulose fait main'],
       ['couleur monture', 'Écaille de tortue / Noir profond'],
       ['type de verre', 'Verres minéraux polarisés'],
       ['protection uv', '100 % UV400 Catégorie 3'],
       ['calibre / pont', '50 mm / 21 mm']
     ];
-    saveAttributes(template);
+    saveAttributes(template.map(([key, value]) => createAttributeRow(key, value)));
   };
 
   return (
@@ -469,23 +483,23 @@ function ProductStructuredFields({ form, onChange }: { form: AnyRecord; onChange
         </div>
 
         <div className="mt-3 space-y-2">
-          {attributes.map(([key, value], index) => (
-            <div key={`${key}-${index}`} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
+          {attributeRows.map((row, index) => (
+            <div key={row.id} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
               <input
-                value={key}
+                value={row.key}
                 onChange={(event) => {
-                  const next = [...attributes];
-                  next[index] = [event.target.value, value];
+                  const next = [...attributeRows];
+                  next[index] = { ...row, key: event.target.value };
                   saveAttributes(next);
                 }}
                 className="admin-input"
                 placeholder="Ex. diamètre, mouvement, verres..."
               />
               <input
-                value={value}
+                value={row.value}
                 onChange={(event) => {
-                  const next = [...attributes];
-                  next[index] = [key, event.target.value];
+                  const next = [...attributeRows];
+                  next[index] = { ...row, value: event.target.value };
                   saveAttributes(next);
                 }}
                 className="admin-input"
@@ -493,7 +507,7 @@ function ProductStructuredFields({ form, onChange }: { form: AnyRecord; onChange
               />
               <button
                 type="button"
-                onClick={() => saveAttributes(attributes.filter((_, current) => current !== index))}
+                onClick={() => saveAttributes(attributeRows.filter((_, current) => current !== index))}
                 className="admin-icon-button text-red-800"
                 aria-label="Supprimer la caractéristique"
               >
@@ -502,7 +516,7 @@ function ProductStructuredFields({ form, onChange }: { form: AnyRecord; onChange
             </div>
           ))}
         </div>
-        <button type="button" onClick={() => saveAttributes([...attributes, ['', '']])} className="admin-secondary-button mt-3">
+        <button type="button" onClick={() => saveAttributes([...attributeRows, createAttributeRow()])} className="admin-secondary-button mt-3">
           + Ajouter une ligne de caractéristique
         </button>
       </fieldset>
@@ -914,14 +928,15 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
 
     if (event.key !== 'Tab' || !productEditorRef.current) return;
 
-    const focusableElements = Array.from(
+    const focusableElements: HTMLElement[] = Array.from(
       productEditorRef.current.querySelectorAll<HTMLElement>(
         'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
       )
-    ).filter((element) => element.offsetParent !== null);
+    ) as HTMLElement[];
+    const visibleFocusableElements = focusableElements.filter((element) => element.offsetParent !== null);
 
-    const firstFocusable = focusableElements[0];
-    const lastFocusable = focusableElements[focusableElements.length - 1];
+    const firstFocusable = visibleFocusableElements[0];
+    const lastFocusable = visibleFocusableElements[visibleFocusableElements.length - 1];
     if (!firstFocusable || !lastFocusable) return;
 
     if (event.shiftKey && document.activeElement === firstFocusable) {
