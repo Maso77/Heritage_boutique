@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useState } from 'react';
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDown,
@@ -833,6 +833,9 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [siteSettings, setSiteSettings] = useState<AnyRecord | null>(null);
   const [editingProduct, setEditingProduct] = useState<AnyRecord | null>(null);
   const [productForm, setProductForm] = useState<AnyRecord>(emptyProduct());
+  const productEditorRef = useRef<HTMLFormElement | null>(null);
+  const productNameInputRef = useRef<HTMLInputElement | null>(null);
+  const productEditorOpenerRef = useRef<HTMLElement | null>(null);
   const [generatedCode, setGeneratedCode] = useState('');
   const [auditLogs, setAuditLogs] = useState<AnyRecord[]>([]);
   const [dashboardPeriod, setDashboardPeriod] = useState<'day' | 'week' | 'month' | 'custom'>('month');
@@ -877,6 +880,58 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [batchUploadAltText, setBatchUploadAltText] = useState('');
   const [batchUploadTags, setBatchUploadTags] = useState('');
   const [deleteWarningMedia, setDeleteWarningMedia] = useState<AnyRecord | null>(null);
+
+  const openProductEditor = (product: AnyRecord, form: AnyRecord) => {
+    productEditorOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setEditingProduct(product);
+    setProductForm(form);
+  };
+
+  const closeProductEditor = () => {
+    setEditingProduct(null);
+    window.requestAnimationFrame(() => productEditorOpenerRef.current?.focus());
+  };
+
+  useEffect(() => {
+    if (editingProduct === null) return;
+
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const focusTimer = window.setTimeout(() => productNameInputRef.current?.focus(), 0);
+
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, [editingProduct]);
+
+  const handleProductEditorKeyDown = (event: React.KeyboardEvent<HTMLFormElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeProductEditor();
+      return;
+    }
+
+    if (event.key !== 'Tab' || !productEditorRef.current) return;
+
+    const focusableElements = Array.from(
+      productEditorRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((element) => element.offsetParent !== null);
+
+    const firstFocusable = focusableElements[0];
+    const lastFocusable = focusableElements[focusableElements.length - 1];
+    if (!firstFocusable || !lastFocusable) return;
+
+    if (event.shiftKey && document.activeElement === firstFocusable) {
+      event.preventDefault();
+      lastFocusable.focus();
+    } else if (!event.shiftKey && document.activeElement === lastFocusable) {
+      event.preventDefault();
+      firstFocusable.focus();
+    }
+  };
 
   const dashboardUrl = () => {
     const now = new Date();
@@ -1142,7 +1197,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
       if (editingProduct?.id) await adminRequest(`/products/${editingProduct.id}`, { method: 'PATCH', body: finalPayload });
       else await adminRequest('/products', { method: 'POST', body: finalPayload });
 
-      setEditingProduct(null);
+      closeProductEditor();
       setProductForm(emptyProduct());
       await loadTab('products');
       notify('Fiche produit enregistrée avec succès.');
@@ -1489,8 +1544,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                   onClick={() => {
                     const prod = products.find((p) => p.id === item.id);
                     if (prod) {
-                      setEditingProduct(prod);
-                      setProductForm(prod);
+                      openProductEditor(prod, prod);
                       selectTab('products');
                     }
                   }}
@@ -1589,8 +1643,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                     key={product.id}
                     type="button"
                     onClick={() => {
-                      setEditingProduct(product);
-                      setProductForm(product);
+                      openProductEditor(product, product);
                       selectTab('products');
                     }}
                     className="flex w-full items-center justify-between px-2 py-3.5 text-left text-sm transition hover:bg-[#FAF9F7]"
@@ -1664,10 +1717,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
           action={
             <button
               type="button"
-              onClick={() => {
-                setEditingProduct({});
-                setProductForm(emptyProduct());
-              }}
+              onClick={() => openProductEditor({}, emptyProduct())}
               className="admin-primary-button"
             >
               <PackagePlus className="h-4 w-4" /> Nouveau produit
@@ -1676,15 +1726,35 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
         />
 
         {editingProduct !== null && (
-          <form onSubmit={saveProduct} className="mb-8 border border-[#002141]/15 bg-white p-5 shadow-sm sm:p-7 space-y-8">
+          <div
+            className="fixed inset-0 z-[100] flex items-end justify-center bg-[#002141]/55 p-0 backdrop-blur-[1px] sm:items-center sm:p-6"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeProductEditor();
+            }}
+          >
+          <form
+            ref={productEditorRef}
+            onSubmit={saveProduct}
+            onKeyDown={handleProductEditorKeyDown}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="product-editor-title"
+            aria-describedby="product-editor-description"
+            className="max-h-[calc(100dvh-0.5rem)] w-full max-w-7xl overflow-y-auto overscroll-contain border border-[#002141]/15 bg-white p-5 shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:p-7 space-y-8"
+          >
             <div className="flex items-center justify-between border-b border-[#002141]/10 pb-4">
               <div>
-                <h2 className="font-playfair text-2xl font-semibold text-[#002141]">
+                <h2 id="product-editor-title" className="font-playfair text-2xl font-semibold text-[#002141]">
                   {editingProduct.id ? `Modifier le produit : ${editingProduct.name}` : 'Création d’un nouveau produit'}
                 </h2>
-                <p className="mt-1 text-sm text-[#3A3A3A]">Renseignez les détails pour publier ou préparer la fiche produit.</p>
+                <p id="product-editor-description" className="mt-1 text-sm text-[#3A3A3A]">Renseignez les détails pour publier ou préparer la fiche produit.</p>
               </div>
-              <button type="button" onClick={() => setEditingProduct(null)} className="admin-icon-button" aria-label="Fermer">
+              <button
+                type="button"
+                onClick={closeProductEditor}
+                className="admin-icon-button focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#AC854B]"
+                aria-label="Fermer l’éditeur produit"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -1700,6 +1770,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                 <label className="text-sm font-semibold text-[#002141]">
                   Nom du produit <span className="text-red-700">*</span>
                   <input
+                    ref={productNameInputRef}
                     required
                     type="text"
                     value={productForm.name || ''}
@@ -2296,11 +2367,12 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
               <button type="submit" className="admin-primary-button">
                 Enregistrer la fiche produit
               </button>
-              <button type="button" onClick={() => setEditingProduct(null)} className="admin-secondary-button">
+              <button type="button" onClick={closeProductEditor} className="admin-secondary-button">
                 Annuler
               </button>
             </div>
           </form>
+          </div>
         )}
 
         {/* Barre de Recherche & Filtres */}
@@ -2544,8 +2616,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                           <button
                             type="button"
                             onClick={() => {
-                              setEditingProduct(product);
-                              setProductForm(toProductForm(product));
+                              openProductEditor(product, toProductForm(product));
                             }}
                             className="admin-icon-button"
                             aria-label="Modifier"

@@ -1095,9 +1095,16 @@ app.post('/api/public/orders', async (req: Request, res: Response) => {
         product_id: String(product.id),
         product_sku: text(product.sku, 80) || null,
         product_name: text(product.name, 255) || 'Article HERITAGE',
+        // `title` is required by the legacy order_items table that remains
+        // present on the deployed project. Keep it as a mirror of the
+        // immutable product-name snapshot used by the current schema.
+        title: text(product.name, 255) || 'Article HERITAGE',
         product_reference: text(product.reference || product.sku, 100) || null,
         product_ref: text(product.reference || product.sku, 100) || null,
         quantity,
+        // Legacy order_items installations require this exact column name.
+        // It mirrors the trusted unit price calculated immediately above.
+        price: unitPrice,
         price_xof: unitPrice,
         unit_price_xof: unitPrice,
         image_url: text(product.primary_image, 1000) || null
@@ -1106,6 +1113,13 @@ app.post('/api/public/orders', async (req: Request, res: Response) => {
 
     const subtotal = orderItems.reduce((sum, item) => sum + item.unit_price_xof * item.quantity, 0);
     const deliveryCost = deliveryMode === 'livraison_abidjan' ? 5000 : 0;
+    const totalXOF = subtotal + deliveryCost;
+    // A pickup has no customer delivery address. Some historical `orders`
+    // schemas nevertheless made their legacy delivery_address column NOT
+    // NULL, so persist the selected pickup point rather than a null value.
+    const recordedDeliveryAddress = deliveryAddress || (
+      deliveryMode === 'retrait_yopougon' ? 'Retrait à la Maison HERITAGE, Yopougon' : null
+    );
     const now = new Date().toISOString();
     const profileResult = await admin.from('profiles').select('full_name').eq('id', authData.user.id).maybeSingle();
     const actorName = text(profileResult.data?.full_name, 180) || customerName;
@@ -1125,16 +1139,20 @@ app.post('/api/public/orders', async (req: Request, res: Response) => {
       customer_email: customerEmail,
       customer_phone: customerPhone,
       customer_commune: customerCommune,
-      customer_delivery_address: deliveryAddress || null,
+      customer_delivery_address: recordedDeliveryAddress,
       customer_notes: customerNotes,
-      delivery_address: deliveryAddress || null,
-      shipping_address: deliveryAddress || null,
+      delivery_address: recordedDeliveryAddress,
+      shipping_address: recordedDeliveryAddress,
       commune: customerCommune,
       notes: customerNotes,
       delivery_mode: deliveryMode,
       subtotal_xof: subtotal,
       delivery_cost_xof: deliveryCost,
-      total_xof: subtotal + deliveryCost,
+      total_xof: totalXOF,
+      // Kept in sync for the legacy order table already deployed on the
+      // project. The repair migration also makes this column optional for
+      // future schema versions.
+      total_amount: totalXOF,
       status: 'pending_payment',
       payment_method: text(orderData.payment_method || orderData.paymentMethod, 50) || 'transmission_whatsapp',
       payment_reference: null,

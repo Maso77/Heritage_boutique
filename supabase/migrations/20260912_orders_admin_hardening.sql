@@ -16,9 +16,20 @@ alter table public.orders add column if not exists delivery_address text;
 alter table public.orders add column if not exists shipping_address text;
 alter table public.orders add column if not exists commune text;
 alter table public.orders add column if not exists notes text;
+alter table public.orders add column if not exists total_amount numeric;
 alter table public.orders add column if not exists delivery_reference text;
 alter table public.orders add column if not exists delivery_proof_url text;
 alter table public.orders alter column customer_delivery_address drop not null;
+alter table public.orders alter column delivery_address drop not null;
+alter table public.orders alter column shipping_address drop not null;
+alter table public.orders alter column total_amount drop not null;
+
+-- Keep the legacy total in step with the canonical total_xof column. This
+-- is necessary for installations whose original table required total_amount.
+update public.orders
+set total_xof = coalesce(total_xof, total_amount, subtotal_xof, 0),
+    total_amount = coalesce(total_amount, total_xof, subtotal_xof, 0)
+where total_xof is null or total_amount is null;
 
 -- Certaines installations antérieures utilisaient une table `order_items`
 -- minimale. Toutes les colonnes lues et écrites par le serveur sont ajoutées
@@ -26,9 +37,11 @@ alter table public.orders alter column customer_delivery_address drop not null;
 alter table public.order_items add column if not exists product_id text;
 alter table public.order_items add column if not exists product_sku text;
 alter table public.order_items add column if not exists product_name text;
+alter table public.order_items add column if not exists title text;
 alter table public.order_items add column if not exists product_reference text;
 alter table public.order_items add column if not exists product_ref text;
 alter table public.order_items add column if not exists quantity integer;
+alter table public.order_items add column if not exists price numeric;
 alter table public.order_items add column if not exists price_xof numeric;
 alter table public.order_items add column if not exists unit_price_xof numeric;
 alter table public.order_items add column if not exists image_url text;
@@ -67,6 +80,11 @@ begin
   end if;
 end;
 $$;
+
+update public.order_items
+set title = coalesce(nullif(title, ''), nullif(product_name, '')),
+    price = coalesce(price, unit_price_xof, price_xof)
+where title is null or title = '' or price is null;
 
 -- Retirer d'abord d'éventuelles contraintes héritées afin de pouvoir
 -- normaliser les anciens libellés sans interrompre la migration.
