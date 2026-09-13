@@ -1,6 +1,7 @@
 import React from 'react';
 import { MessageCircle } from 'lucide-react';
 import { usePublicContent } from '../../lib/public-content';
+import { whatsappHref } from '../../lib/site-contact';
 
 interface WhatsAppButtonProps {
   currentRoute?: string;
@@ -24,9 +25,8 @@ export const WhatsAppButton: React.FC<WhatsAppButtonProps> = ({ currentRoute = '
     ? `Bonjour HERITAGE, je souhaite un conseil au sujet de la référence ${activeReference}.`
     : 'Bonjour HERITAGE, je souhaite échanger avec un conseiller au sujet de votre sélection de montres.';
 
-  const whatsappNumber = (siteSettings?.whatsapp_phone || siteSettings?.phone || '').replace(/\D/g, '');
-  if (!whatsappNumber) return null;
-  const encodedUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(messageText)}`;
+  const encodedUrl = whatsappHref(siteSettings, messageText);
+  if (!encodedUrl) return null;
 
   return (
     <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-40">

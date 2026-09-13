@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { MessageCircle, Phone, Mail, MapPin, Clock, Send, CheckCircle2 } from 'lucide-react';
 import { usePublicContent } from '../../lib/public-content';
+import { phoneHref, whatsappHref } from '../../lib/site-contact';
 import { PublicFeedbackSections } from '../common/PublicFeedbackSections';
 
 interface ContactViewProps {
@@ -37,7 +38,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
       setSubmissionError(error instanceof Error ? error.message : 'Votre message ne peut pas être transmis pour le moment. Veuillez réessayer.');
     }
   };
-  const whatsappNumber = (siteSettings?.whatsapp_phone || siteSettings?.phone || '').replace(/\D/g, '');
+  const whatsappUrl = whatsappHref(siteSettings, 'Bonjour HERITAGE, je souhaite un conseil au sujet de vos montres.');
   const contactFaqs = faqs.filter((faq) => faq.placements.includes('contact'));
   const featuredReviews = reviews.filter((review) => review.is_featured_contact).slice(0, 3);
   const socialLinks = Object.entries(siteSettings?.social_links || {}).filter(([, url]) => Boolean(url));
@@ -67,7 +68,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
           </h1>
           <p className="text-sm sm:text-base text-[#3A3A3A] leading-relaxed">
             Une question technique sur un calibre, une hésitation entre deux références ou une
-            demande de prise de rendez-vous à Yopougon. Notre équipe vous répond avec attention.
+            demande de prise de rendez-vous. Notre équipe vous répond avec attention.
           </p>
         </div>
 
@@ -96,7 +97,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                   </div>
                   <div>
                     <strong className="text-[#002141] block mb-0.5">Téléphone & WhatsApp</strong>
-                    <a href={siteSettings?.phone ? `tel:${siteSettings.phone.replace(/\s/g, '')}` : undefined} className="hover:text-[#AC854B] transition-colors">
+                    <a href={phoneHref(siteSettings?.phone)} className="hover:text-[#AC854B] transition-colors">
                       {siteSettings?.phone || ''}
                     </a>
                   </div>
@@ -117,7 +118,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                   </div>
                 </div>
 
-                <div className="flex items-start gap-4">
+                {siteSettings?.hours && <div className="flex items-start gap-4">
                   <div className="w-8 h-8 rounded-full bg-[#FAF9F7] border border-[#AC854B]/30 flex items-center justify-center text-[#AC854B] flex-shrink-0 mt-0.5">
                     <Clock className="w-4 h-4" />
                   </div>
@@ -125,12 +126,12 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                     <strong className="text-[#002141] block mb-0.5">Horaires de conseil</strong>
                     <span>{siteSettings?.hours || ''}</span>
                   </div>
-                </div>
+                </div>}
               </div>
 
-              {whatsappNumber && <div className="pt-4 border-t border-[#002141]/10">
+              {whatsappUrl && <div className="pt-4 border-t border-[#002141]/10">
                 <a
-                  href={`https://wa.me/${whatsappNumber}?text=${encodeURIComponent('Bonjour HERITAGE, je souhaite un conseil au sujet de vos montres.')}`}
+                  href={whatsappUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="premium-cta w-full py-3.5 px-6 bg-[#25D366] hover:bg-[#20b858] text-white text-xs font-bold uppercase tracking-[0.16em] flex items-center justify-center gap-2.5 shadow-sm"
@@ -249,7 +250,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
                   >
                     <option value="Renseignement sur une montre">Renseignement sur une montre</option>
                     <option value="Disponibilité d'un modèle">Disponibilité d'un modèle</option>
-                    <option value="Prise de rendez-vous à Yopougon">Prise de rendez-vous à Yopougon</option>
+                    <option value="Prise de rendez-vous">Prise de rendez-vous</option>
                     <option value="Suivi de commande">Suivi de commande</option>
                     <option value="Autre demande">Autre demande</option>
                   </select>

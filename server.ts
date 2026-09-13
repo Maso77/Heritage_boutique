@@ -39,7 +39,7 @@ const CONTACT_MAX_EMAIL_ATTEMPTS = 3;
 const CONTACT_SUBJECTS = new Set([
   'Renseignement sur une montre',
   "Disponibilité d'un modèle",
-  'Prise de rendez-vous à Yopougon',
+  'Prise de rendez-vous',
   'Suivi de commande',
   'Autre demande'
 ]);
@@ -317,6 +317,13 @@ function productPayload(body: Record<string, unknown>, adminId: string) {
 
 function validEmail(value: string) {
   return /^\S+@\S+\.\S+$/.test(value);
+}
+
+function validPhone(value: unknown) {
+  const candidate = text(value, 80);
+  if (!candidate) return true;
+  const digits = candidate.replace(/\D/g, '');
+  return /^[0-9+().\s-]+$/.test(candidate) && digits.length >= 8 && digits.length <= 15;
 }
 
 function jsonArray(value: unknown): Record<string, any>[] {
@@ -885,7 +892,9 @@ app.get('/api/public/site-settings', async (_req: Request, res: Response) => {
       .eq('id', true)
       .single();
     if (error) throw error;
-    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+    // Contact details are edited from the portal and must be refreshed on the
+    // storefront as soon as the page is revisited, not served from a stale CDN cache.
+    res.setHeader('Cache-Control', 'no-store');
     res.json(data);
   } catch {
     sendError(res, 503, 'Les coordonnées sont temporairement indisponibles.');
@@ -2351,26 +2360,44 @@ app.patch('/api/admin/site-settings', async (req: AdminRequest, res: Response) =
     if (!socialLinks || Array.isArray(socialLinks) || typeof socialLinks !== 'object') {
       return sendError(res, 400, 'Les liens sociaux doivent être fournis sous forme d’adresses valides.');
     }
-    for (const value of Object.values(socialLinks as Record<string, unknown>)) {
-      if (value && !optionalUrl(value)) return sendError(res, 400, 'Chaque lien de réseau social doit commencer par http:// ou https://.');
+    const allowedSocialNetworks = new Set(['facebook', 'instagram', 'tiktok', 'x', 'youtube']);
+    const sanitizedSocialLinks: Record<string, string> = {};
+    for (const [network, value] of Object.entries(socialLinks as Record<string, unknown>)) {
+      // Legacy settings may contain a network the portal no longer exposes.
+      // It is intentionally discarded when the singleton is next saved.
+      if (!allowedSocialNetworks.has(network)) continue;
+      if (!value) continue;
+      const url = optionalUrl(value);
+      if (!url) return sendError(res, 400, 'Chaque lien de réseau social doit commencer par http:// ou https://.');
+      sanitizedSocialLinks[network] = url;
     }
+    const email = text(req.body?.email, 180).toLowerCase();
+    const phone = text(req.body?.phone, 80);
+    const whatsappPhone = text(req.body?.whatsapp_phone, 80);
+    if (email && !validEmail(email)) return sendError(res, 400, 'Veuillez saisir une adresse e-mail valide.');
+    if (!validPhone(phone)) return sendError(res, 400, 'Veuillez saisir un numéro de téléphone plausible (8 à 15 chiffres).');
+    if (!validPhone(whatsappPhone)) return sendError(res, 400, 'Veuillez saisir un numéro WhatsApp plausible (8 à 15 chiffres).');
     const footerNotices = jsonValue(req.body?.footer_notices, []);
     if (!Array.isArray(footerNotices) || footerNotices.some((item) => !item || !text((item as Record<string, unknown>).title, 120) || !text((item as Record<string, unknown>).body, 500))) {
       return sendError(res, 400, 'Chaque information du footer doit avoir un titre et un texte.');
     }
     const payload = {
       business_name: text(req.body?.business_name, 160) || 'HERITAGE',
-      email: text(req.body?.email, 180) || null,
-      phone: text(req.body?.phone, 80) || null,
-      whatsapp_phone: text(req.body?.whatsapp_phone, 80) || null,
+      email: email || null,
+      phone: phone || null,
+      whatsapp_phone: whatsappPhone || null,
       address: text(req.body?.address, 500) || null,
       hours: text(req.body?.hours, 500) || null,
-      social_links: socialLinks,
+      social_links: sanitizedSocialLinks,
       structured_data_enabled: Boolean(req.body?.structured_data_enabled),
       footer_notices: footerNotices.slice(0, 3).map((item) => ({ title: text((item as Record<string, unknown>).title, 120), body: text((item as Record<string, unknown>).body, 500) })),
       updated_by: req.admin!.id
     };
-    const { data, error } = await getSupabaseAdmin().from('site_settings').update(payload).eq('id', true).select().single();
+    const { data, error } = await getSupabaseAdmin()
+      .from('site_settings')
+      .upsert({ id: true, ...payload }, { onConflict: 'id' })
+      .select()
+      .single();
     if (error) throw error;
     await writeAudit(req.admin!.id, 'updated', 'site_settings', 'true');
     res.json(data);

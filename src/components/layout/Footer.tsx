@@ -1,6 +1,7 @@
 import React from 'react';
 import { Phone, Mail, MapPin, ShieldCheck, Clock, Award, Facebook, Instagram, Youtube } from 'lucide-react';
 import { usePublicContent } from '../../lib/public-content';
+import { phoneHref } from '../../lib/site-contact';
 
 interface FooterProps {
   navigate: (route: string) => void;
@@ -102,7 +103,7 @@ export const Footer: React.FC<FooterProps> = ({ navigate }) => {
               <div className="flex items-center gap-2">
                 <Phone className="w-3.5 h-3.5 text-[#D6BB8F]" />
                 <a
-                  href={siteSettings?.phone ? `tel:${siteSettings.phone.replace(/\s/g, '')}` : undefined}
+                  href={phoneHref(siteSettings?.phone)}
                   className="hover:text-[#D6BB8F] transition-colors"
                 >
                   {siteSettings?.phone || ''}
@@ -293,7 +294,7 @@ export const Footer: React.FC<FooterProps> = ({ navigate }) => {
           <p>
             Tous nos prix sont affichés en Francs CFA (FCFA / XOF). Commandes validées et remises en main propre à Abidjan.
           </p>
-          <p>&copy; {new Date().getFullYear()} HERITAGE. Tous droits réservés. Abidjan, Côte d'Ivoire.</p>
+          <p>&copy; {new Date().getFullYear()} {siteSettings?.business_name || 'HERITAGE'}. Tous droits réservés. {siteSettings?.address || 'Abidjan, Côte d’Ivoire'}.</p>
         </div>
       </div>
     </footer>

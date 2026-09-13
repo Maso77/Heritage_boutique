@@ -165,7 +165,9 @@ export async function publicRequest<T>(path: string): Promise<T> {
 export const PublicContentProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [blogs, setBlogs] = useState<PublicBlogPost[]>([]);
-  const [siteSettings, setSiteSettings] = useState<SiteSettings | null>(null);
+  // Keep the storefront contact links usable while the current Supabase values
+  // are being loaded, then replace this fallback with the singleton settings row.
+  const [siteSettings, setSiteSettings] = useState<SiteSettings | null>(FALLBACK_SITE_SETTINGS);
   const [faqs, setFaqs] = useState<PublicFaq[]>([]);
   const [reviews, setReviews] = useState<PublicReview[]>([]);
   const [loading, setLoading] = useState(true);

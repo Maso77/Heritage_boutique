@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { usePublicContent, xof as formatXOF } from '../../lib/public-content';
+import { whatsappHref } from '../../lib/site-contact';
 import { Product } from '../../types';
 import {
   Heart,
@@ -27,7 +28,7 @@ export const WishlistView: React.FC<WishlistViewProps> = ({ navigate }) => {
     addToCart,
     setCartToast
   } = useStore();
-  const { products } = usePublicContent();
+  const { products, siteSettings } = usePublicContent();
 
   const [copiedLink, setCopiedLink] = useState(false);
   const [addedItems, setAddedItems] = useState<Record<string, boolean>>({});
@@ -94,7 +95,7 @@ export const WishlistView: React.FC<WishlistViewProps> = ({ navigate }) => {
     .map((p, idx) => `${idx + 1}. ${p.brand} ${p.name} (Réf. ${p.reference}) - ${formatXOF(p.priceXOF)}`)
     .join('\n')}\n\nPouvez-vous me confirmer la disponibilité et les modalités de livraison à Abidjan ?`;
 
-  const whatsappUrl = `https://wa.me/2250707181560?text=${encodeURIComponent(whatsappMessage)}`;
+  const whatsappUrl = whatsappHref(siteSettings, whatsappMessage);
 
   return (
     <div className="bg-[#FAF9F7] min-h-screen pt-24 pb-24">
@@ -252,7 +253,7 @@ export const WishlistView: React.FC<WishlistViewProps> = ({ navigate }) => {
                   <span>TOUT AJOUTER AU PANIER</span>
                 </button>
 
-                <a
+                {whatsappUrl && <a
                   href={whatsappUrl}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -261,7 +262,7 @@ export const WishlistView: React.FC<WishlistViewProps> = ({ navigate }) => {
                 >
                   <MessageCircle className="w-4 h-4" />
                   <span>DEMANDER CONSEIL SUR CETTE SÉLECTION</span>
-                </a>
+                </a>}
               </div>
             </div>
 
@@ -455,7 +456,7 @@ export const WishlistView: React.FC<WishlistViewProps> = ({ navigate }) => {
                     </h3>
                     <p className="text-xs text-[#4A4A4A] leading-relaxed">
                       Livraison discrète et assurée partout à Abidjan ou retrait exclusif sur
-                      rendez-vous à notre salon de Yopougon.
+                      rendez-vous à {siteSettings?.address || 'notre Maison à Abidjan'}.
                     </p>
                   </div>
                 </div>

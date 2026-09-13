@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowRight, MessageCircle } from 'lucide-react';
+import { usePublicContent } from '../../lib/public-content';
+import { whatsappHref } from '../../lib/site-contact';
 
 interface HeroSectionProps {
   navigate: (route: string) => void;
@@ -67,6 +69,8 @@ const smoothstep = (value: number, start: number, end: number) => {
 };
 
 export const HeroSection: React.FC<HeroSectionProps> = ({ navigate }) => {
+  const { siteSettings } = usePublicContent();
+  const whatsappUrl = whatsappHref(siteSettings, 'Bonjour HERITAGE, je souhaite un conseil au sujet de votre sélection de montres.');
   const [isPlaying, setIsPlaying] = useState(true);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [isVideoReady, setIsVideoReady] = useState(false);
@@ -404,8 +408,8 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ navigate }) => {
                       <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
                     </button>
 
-                    <a
-                      href="https://wa.me/2250707181560?text=Bonjour%20HERITAGE%2C%20je%20souhaite%20un%20conseil%20au%20sujet%20de%20votre%20s%C3%A9lection%20de%20montres."
+                    {whatsappUrl && <a
+                      href={whatsappUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       id="hero-secondary-cta"
@@ -413,7 +417,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ navigate }) => {
                     >
                       <MessageCircle className="h-4 w-4 text-[#D6BB8F]" />
                       <span>ÉCHANGER AVEC UN CONSEILLER</span>
-                    </a>
+                    </a>}
                   </div>
                 )}
 

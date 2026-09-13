@@ -1,11 +1,16 @@
 import React from 'react';
 import { ShieldCheck, Award, FileText, CheckCircle2, MessageCircle } from 'lucide-react';
+import { usePublicContent } from '../../lib/public-content';
+import { whatsappHref } from '../../lib/site-contact';
 
 interface AuthenticityViewProps {
   navigate: (route: string) => void;
 }
 
 export const AuthenticityView: React.FC<AuthenticityViewProps> = ({ navigate }) => {
+  const { siteSettings } = usePublicContent();
+  const whatsappUrl = whatsappHref(siteSettings, 'Bonjour HERITAGE, je souhaite en savoir plus sur l’authenticité d’une pièce.');
+
   return (
     <div className="bg-[#FAF9F7] min-h-screen pt-24 pb-24">
       {/* Header */}
@@ -122,18 +127,18 @@ export const AuthenticityView: React.FC<AuthenticityViewProps> = ({ navigate }) 
               Une question sur une pièce spécifique ?
             </h3>
             <p className="text-xs sm:text-sm text-[#FAF9F7]/80">
-              Nos conseillers horlogers à Yopougon sont à votre disposition pour vous renseigner.
+              Nos conseillers sont à votre disposition pour vous renseigner.
             </p>
           </div>
-          <a
-            href="https://wa.me/2250707181560?text=Bonjour%20HERITAGE%2C%20je%20souhaite%20en%20savoir%20plus%20sur%20l%27authenticit%C3%A9%20d%27une%20pi%C3%A8ce."
+          {whatsappUrl && <a
+            href={whatsappUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="px-6 py-3.5 bg-[#AC854B] hover:bg-[#96723c] text-[#FAF9F7] text-xs font-bold uppercase tracking-[0.16em] transition-colors flex items-center gap-2.5 flex-shrink-0 cursor-pointer"
           >
             <MessageCircle className="w-4 h-4" />
             <span>ÉCHANGER AVEC UN CONSEILLER</span>
-          </a>
+          </a>}
         </div>
       </div>
     </div>

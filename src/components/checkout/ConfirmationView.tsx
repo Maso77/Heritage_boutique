@@ -2,6 +2,8 @@ import React from 'react';
 import { useStore } from '../../context/StoreContext';
 import { formatXOF } from '../../data/products';
 import { CheckCircle, Phone, MapPin, MessageSquare } from 'lucide-react';
+import { usePublicContent } from '../../lib/public-content';
+import { whatsappHref } from '../../lib/site-contact';
 
 interface ConfirmationViewProps {
   navigate: (route: string) => void;
@@ -9,6 +11,7 @@ interface ConfirmationViewProps {
 
 export const ConfirmationView: React.FC<ConfirmationViewProps> = ({ navigate }) => {
   const { currentOrder } = useStore();
+  const { siteSettings } = usePublicContent();
 
   if (!currentOrder) {
     return (
@@ -33,7 +36,6 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({ navigate }) 
   }
 
   // Pre-filled WhatsApp message generator
-  const whatsappPhone = '2250700000000'; // Default store phone number
   const orderItemsSummary = currentOrder.items
     ? currentOrder.items.map((i) => `• ${i.quantity}x ${i.product.name} (${formatXOF(i.product.priceXOF * i.quantity)})`).join('\n')
     : '';
@@ -48,7 +50,7 @@ Je viens de valider ma commande N° *${currentOrder.orderNumber}* sur le site.
 • Email : ${currentOrder.customer.email}
 
 *Mode de réception :*
-${currentOrder.customer.deliveryMode === 'livraison_abidjan' ? `• Livraison à Abidjan (${currentOrder.customer.commune}) - ${currentOrder.customer.deliveryAddress || ''}` : '• Retrait sur rendez-vous à la Maison HERITAGE (Yopougon)'}
+${currentOrder.customer.deliveryMode === 'livraison_abidjan' ? `• Livraison à Abidjan (${currentOrder.customer.commune}) - ${currentOrder.customer.deliveryAddress || ''}` : `• Retrait sur rendez-vous à la Maison HERITAGE${siteSettings?.address ? ` (${siteSettings.address})` : ''}`}
 
 *Articles commandés :*
 ${orderItemsSummary}
@@ -57,7 +59,7 @@ ${orderItemsSummary}
 
 Merci de me recontacter pour finaliser la livraison.`;
 
-  const whatsappUrl = `https://wa.me/${whatsappPhone}?text=${encodeURIComponent(whatsappMessage)}`;
+  const whatsappUrl = whatsappHref(siteSettings, whatsappMessage);
 
   return (
     <div className="bg-[#FAF9F7] min-h-screen pt-24 pb-24">
@@ -81,7 +83,7 @@ Merci de me recontacter pour finaliser la livraison.`;
           </p>
 
           {/* Prominent WhatsApp CTA Button */}
-          <div className="max-w-md mx-auto mb-6">
+          {whatsappUrl && <div className="max-w-md mx-auto mb-6">
             <a
               href={whatsappUrl}
               target="_blank"
@@ -91,7 +93,7 @@ Merci de me recontacter pour finaliser la livraison.`;
               <MessageSquare className="w-5 h-5 flex-shrink-0" />
               <span>TRANSMETTRE LA COMMANDE PAR WHATSAPP</span>
             </a>
-          </div>
+          </div>}
 
           <div className="inline-flex flex-col sm:flex-row items-center gap-4 p-4 bg-[#FAF9F7] border border-[#002141]/10 text-xs text-[#3A3A3A]">
             <div>

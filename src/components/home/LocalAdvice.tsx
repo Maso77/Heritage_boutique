@@ -1,11 +1,16 @@
 import React from 'react';
 import { MessageCircle, Phone, MapPin } from 'lucide-react';
+import { usePublicContent } from '../../lib/public-content';
+import { whatsappHref } from '../../lib/site-contact';
 
 interface LocalAdviceProps {
   navigate: (route: string) => void;
 }
 
 export const LocalAdvice: React.FC<LocalAdviceProps> = ({ navigate }) => {
+  const { siteSettings } = usePublicContent();
+  const whatsappUrl = whatsappHref(siteSettings, 'Bonjour HERITAGE, je souhaite un conseil au sujet de votre sélection de montres.');
+
   return (
     <section className="py-20 md:py-28 bg-white border-b border-[#002141]/10">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -24,30 +29,30 @@ export const LocalAdvice: React.FC<LocalAdviceProps> = ({ navigate }) => {
 
             <p className="text-sm sm:text-base text-[#FAF9F7]/85 leading-relaxed mb-8">
               Vous hésitez entre deux références, cherchez une pièce à offrir ou souhaitez
-              comprendre un détail technique. Échangez avec HERITAGE depuis Yopougon, Abidjan.
+              comprendre un détail technique. Échangez avec HERITAGE depuis Abidjan.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8 text-xs text-[#FAF9F7]/90 max-w-lg">
               <div className="flex items-center gap-3">
                 <MapPin className="w-4 h-4 text-[#D6BB8F] flex-shrink-0" />
-                <span>Maison basée à Yopougon, Abidjan</span>
+                <span>{siteSettings?.address || 'Maison HERITAGE à Abidjan'}</span>
               </div>
               <div className="flex items-center gap-3">
                 <Phone className="w-4 h-4 text-[#D6BB8F] flex-shrink-0" />
-                <span>Appel ou WhatsApp : +225 07 07 18 15 60</span>
+                <span>Appel ou WhatsApp : {siteSettings?.whatsapp_phone || siteSettings?.phone || ''}</span>
               </div>
             </div>
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-              <a
-                href="https://wa.me/2250707181560?text=Bonjour%20HERITAGE%2C%20je%20souhaite%20un%20conseil%20au%20sujet%20de%20votre%20s%C3%A9lection%20de%20montres."
+              {whatsappUrl && <a
+                href={whatsappUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="premium-cta px-8 py-4 bg-[#AC854B] hover:bg-[#96723c] text-[#FAF9F7] text-xs font-bold uppercase tracking-[0.16em] flex items-center justify-center gap-3"
               >
                 <MessageCircle className="w-4 h-4" />
                 <span>ÉCHANGER AVEC HERITAGE</span>
-              </a>
+              </a>}
 
               <button
                 type="button"

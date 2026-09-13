@@ -845,6 +845,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [contactMessageDetailLoading, setContactMessageDetailLoading] = useState(false);
   const [resources, setResources] = useState<Record<string, AnyRecord[]>>({});
   const [siteSettings, setSiteSettings] = useState<AnyRecord | null>(null);
+  const [coordinatesError, setCoordinatesError] = useState('');
+  const [savingCoordinates, setSavingCoordinates] = useState(false);
   const [editingProduct, setEditingProduct] = useState<AnyRecord | null>(null);
   const [productForm, setProductForm] = useState<AnyRecord>(emptyProduct());
   const productEditorRef = useRef<HTMLFormElement | null>(null);
@@ -5092,26 +5094,75 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
 
   const renderCoordinates = () => {
     const settings = siteSettings || { business_name: 'HERITAGE', social_links: {}, footer_notices: [] };
-    const socials = typeof settings.social_links === 'string' ? (() => { try { return JSON.parse(settings.social_links); } catch { return {}; } })() : (settings.social_links || {});
-    const notices = typeof settings.footer_notices === 'string' ? (() => { try { return JSON.parse(settings.footer_notices); } catch { return []; } })() : (settings.footer_notices || []);
-    const setSocial = (network: string, value: string) => setSiteSettings((current) => ({ ...(current || {}), social_links: { ...(typeof current?.social_links === 'object' ? current.social_links : {}), [network]: value } }));
+    const socialValue = typeof settings.social_links === 'string' ? (() => { try { return JSON.parse(settings.social_links); } catch { return {}; } })() : settings.social_links;
+    const socials = socialValue && typeof socialValue === 'object' && !Array.isArray(socialValue) ? socialValue as Record<string, string> : {};
+    const noticesValue = typeof settings.footer_notices === 'string' ? (() => { try { return JSON.parse(settings.footer_notices); } catch { return []; } })() : settings.footer_notices;
+    const notices = Array.isArray(noticesValue) ? noticesValue : [];
+    const setSocial = (network: string, value: string) => setSiteSettings((current) => ({ ...(current || {}), social_links: { ...socials, [network]: value } }));
+    const setNotice = (index: number, field: 'title' | 'body', value: string) => setSiteSettings((current) => {
+      const next = [...notices];
+      next[index] = { ...(next[index] || {}), [field]: value };
+      return { ...(current || {}), footer_notices: next };
+    });
+    const phoneIsPlausible = (value: unknown) => {
+      const candidate = String(value || '').trim();
+      const digits = candidate.replace(/\D/g, '');
+      return !candidate || (/^[0-9+().\s-]+$/.test(candidate) && digits.length >= 8 && digits.length <= 15);
+    };
+    const urlIsValid = (value: unknown) => {
+      const candidate = String(value || '').trim();
+      if (!candidate) return true;
+      try {
+        const url = new URL(candidate);
+        return url.protocol === 'https:' || url.protocol === 'http:';
+      } catch {
+        return false;
+      }
+    };
     return <>
       <PanelHeader eyebrow="Informations de la maison" title="Coordonnées" description="Une seule source Supabase pour le footer, Contact, WhatsApp et les réseaux sociaux." />
       <form onSubmit={async (event) => {
         event.preventDefault();
+        setCoordinatesError('');
+        const email = String(settings.email || '').trim();
+        if (email && !/^\S+@\S+\.\S+$/.test(email)) {
+          setCoordinatesError('Veuillez saisir une adresse e-mail valide.');
+          return;
+        }
+        if (!phoneIsPlausible(settings.phone) || !phoneIsPlausible(settings.whatsapp_phone)) {
+          setCoordinatesError('Les numéros Téléphone et WhatsApp doivent comporter entre 8 et 15 chiffres.');
+          return;
+        }
+        if (Object.values(socials).some((url) => !urlIsValid(url))) {
+          setCoordinatesError('Chaque lien de réseau social doit commencer par http:// ou https://.');
+          return;
+        }
+        setSavingCoordinates(true);
         try {
-          await adminRequest('/site-settings', { method: 'PATCH', body: { ...settings, social_links: JSON.stringify(socials), footer_notices: JSON.stringify(notices) } });
-          await loadTab('coordinates');
+          const updated = await adminRequest<AnyRecord>('/site-settings', { method: 'PATCH', body: { ...settings, social_links: JSON.stringify(socials), footer_notices: JSON.stringify(notices) } });
+          setSiteSettings(updated);
           notify('Coordonnées enregistrées.');
-        } catch (error) { notify(error instanceof Error ? error.message : 'Enregistrement impossible.'); }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Enregistrement impossible.';
+          setCoordinatesError(message);
+          notify(message);
+        } finally {
+          setSavingCoordinates(false);
+        }
       }} className="max-w-4xl border border-[#002141]/15 bg-white p-5 sm:p-7">
+        {coordinatesError && <div role="alert" className="mb-5 border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{coordinatesError}</div>}
         <div className="grid gap-5 md:grid-cols-2">
-          {[['business_name','Nom de la boutique'],['email','E-mail'],['phone','Téléphone'],['whatsapp_phone','Numéro WhatsApp'],['address','Adresse'],['hours','Horaires']].map(([name,label]) => <label key={name} className="text-sm font-semibold text-[#002141]">{label}<input type={name === 'email' ? 'email' : name.includes('phone') ? 'tel' : 'text'} value={settings[name] || ''} onChange={(event) => setSiteSettings((current) => ({ ...(current || {}), [name]: event.target.value }))} className="admin-input mt-2" /></label>)}
-          <fieldset className="md:col-span-2 border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Réseaux sociaux</legend><div className="mt-2 grid gap-4 sm:grid-cols-2">{[['facebook','Facebook'],['instagram','Instagram'],['tiktok','TikTok'],['x','X'],['youtube','YouTube']].map(([network,label]) => <label key={network} className="text-sm font-semibold text-[#002141]">{label}<input type="url" value={socials[network] || ''} onChange={(event) => setSocial(network, event.target.value)} placeholder="https://…" className="admin-input mt-2" /></label>)}</div></fieldset>
-          <fieldset className="md:col-span-2 border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Informations mises en avant dans le footer</legend><p className="mb-3 text-xs leading-relaxed text-[#3A3A3A]">Laissez vide tant que l’information (authenticité, livraison ou garantie) n’est pas validée par la Maison.</p>{[0, 1, 2].map((index) => <div key={index} className="mb-3 grid gap-3 sm:grid-cols-[1fr_2fr]"><input value={notices[index]?.title || ''} onChange={(event) => setSiteSettings((current) => { const next = Array.isArray(current?.footer_notices) ? [...current.footer_notices] : []; next[index] = { ...(next[index] || {}), title: event.target.value, body: next[index]?.body || '' }; return { ...(current || {}), footer_notices: next }; })} placeholder={`Titre ${index + 1}`} className="admin-input" /><input value={notices[index]?.body || ''} onChange={(event) => setSiteSettings((current) => { const next = Array.isArray(current?.footer_notices) ? [...current.footer_notices] : []; next[index] = { ...(next[index] || {}), title: next[index]?.title || '', body: event.target.value }; return { ...(current || {}), footer_notices: next }; })} placeholder="Texte validé" className="admin-input" /></div>)}</fieldset>
+          <label className="text-sm font-semibold text-[#002141]">Nom de la boutique<input type="text" value={settings.business_name || ''} onChange={(event) => setSiteSettings((current) => ({ ...(current || {}), business_name: event.target.value }))} className="admin-input mt-2" /></label>
+          <label className="text-sm font-semibold text-[#002141]">Adresse e-mail<input type="email" value={settings.email || ''} onChange={(event) => setSiteSettings((current) => ({ ...(current || {}), email: event.target.value }))} className="admin-input mt-2" placeholder="contact@heritageboutique.ci" /></label>
+          <label className="text-sm font-semibold text-[#002141]">Téléphone<input type="tel" inputMode="tel" value={settings.phone || ''} onChange={(event) => setSiteSettings((current) => ({ ...(current || {}), phone: event.target.value }))} className="admin-input mt-2" placeholder="+225 07 00 00 00 00" /></label>
+          <label className="text-sm font-semibold text-[#002141]">Numéro WhatsApp<input type="tel" inputMode="tel" value={settings.whatsapp_phone || ''} onChange={(event) => setSiteSettings((current) => ({ ...(current || {}), whatsapp_phone: event.target.value }))} className="admin-input mt-2" placeholder="+225 07 00 00 00 00" /></label>
+          <label className="text-sm font-semibold text-[#002141]">Adresse de la Maison<input type="text" value={settings.address || ''} onChange={(event) => setSiteSettings((current) => ({ ...(current || {}), address: event.target.value }))} className="admin-input mt-2" placeholder="Abidjan, Côte d’Ivoire" /></label>
+          <label className="text-sm font-semibold text-[#002141]">Horaires <span className="font-normal text-[#3A3A3A]">(uniquement s’ils sont validés)</span><input type="text" value={settings.hours || ''} onChange={(event) => setSiteSettings((current) => ({ ...(current || {}), hours: event.target.value }))} className="admin-input mt-2" placeholder="Lundi - Samedi : 09h00 - 19h00" /></label>
+          <fieldset className="md:col-span-2 border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Réseaux sociaux</legend><p className="mt-1 text-xs text-[#3A3A3A]">Laissez un champ vide pour ne pas afficher ce réseau sur le site public.</p><div className="mt-4 grid gap-4 sm:grid-cols-2">{[['facebook','Facebook'],['instagram','Instagram'],['tiktok','TikTok'],['x','X'],['youtube','YouTube']].map(([network,label]) => <label key={network} className="text-sm font-semibold text-[#002141]">{label}<input type="url" value={socials[network] || ''} onChange={(event) => setSocial(network, event.target.value)} placeholder="https://…" className="admin-input mt-2" /></label>)}</div></fieldset>
+          <fieldset className="md:col-span-2 border border-[#002141]/15 p-4"><legend className="px-1 text-sm font-semibold text-[#002141]">Informations mises en avant dans le footer</legend><p className="mb-3 text-xs leading-relaxed text-[#3A3A3A]">Laissez vide tant que l’information (authenticité, livraison ou garantie) n’est pas validée par la Maison.</p>{[0, 1, 2].map((index) => <div key={index} className="mb-3 grid gap-3 sm:grid-cols-[1fr_2fr]"><input value={notices[index]?.title || ''} onChange={(event) => setNotice(index, 'title', event.target.value)} placeholder={`Titre ${index + 1}`} className="admin-input" /><input value={notices[index]?.body || ''} onChange={(event) => setNotice(index, 'body', event.target.value)} placeholder="Texte validé" className="admin-input" /></div>)}</fieldset>
           <label className="md:col-span-2 flex min-h-12 items-center gap-3 border border-[#002141]/15 px-4 text-sm font-semibold text-[#002141]"><input type="checkbox" checked={Boolean(settings.structured_data_enabled)} onChange={(event) => setSiteSettings((current) => ({ ...(current || {}), structured_data_enabled: event.target.checked }))} className="h-4 w-4 accent-[#AC854B]" /> Activer les données structurées de la Maison une fois les coordonnées validées</label>
         </div>
-        <button type="submit" className="admin-primary-button mt-7">Enregistrer les coordonnées</button>
+        <button type="submit" disabled={savingCoordinates} className="admin-primary-button mt-7 disabled:cursor-not-allowed disabled:opacity-60">{savingCoordinates ? 'Enregistrement…' : 'Enregistrer les coordonnées'}</button>
       </form>
     </>;
   };

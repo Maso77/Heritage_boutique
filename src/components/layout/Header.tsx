@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Search, ShoppingBag, Menu, X, User, Heart } from 'lucide-react';
+import { usePublicContent } from '../../lib/public-content';
+import { phoneHref, whatsappHref } from '../../lib/site-contact';
 
 interface HeaderProps {
   currentRoute?: string;
@@ -16,8 +18,11 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenCart,
 }) => {
   const { cartItemCount, wishlistItemCount, setIsCartOpen, setIsSearchOpen } = useStore();
+  const { siteSettings } = usePublicContent();
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const directAdviceMessage = 'Bonjour HERITAGE, je souhaite un conseil au sujet de votre sélection de montres.';
+  const mobileWhatsappUrl = whatsappHref(siteSettings, directAdviceMessage);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -296,25 +301,25 @@ export const Header: React.FC<HeaderProps> = ({
             </nav>
 
             <div className="mt-auto pt-6 border-t border-[#002141]/10 text-xs text-[#3A3A3A] space-y-3">
-              <p className="font-medium text-[#002141]">Maison HERITAGE &middot; Abidjan</p>
-              <p>Yopougon, Abidjan, Côte d'Ivoire</p>
+              <p className="font-medium text-[#002141]">Maison {siteSettings?.business_name || 'HERITAGE'}</p>
+              {siteSettings?.address && <p>{siteSettings.address}</p>}
               <p>
                 Conseil direct :{' '}
                 <a
-                  href="tel:+2250707181560"
+                  href={phoneHref(siteSettings?.phone)}
                   className="font-semibold text-[#002141] underline underline-offset-2"
                 >
-                  +225 07 07 18 15 60
+                  {siteSettings?.phone || ''}
                 </a>
               </p>
-              <a
-                href="https://wa.me/2250707181560?text=Bonjour%20HERITAGE%2C%20je%20souhaite%20un%20conseil%20au%20sujet%20de%20votre%20s%C3%A9lection%20de%20montres."
+              {mobileWhatsappUrl && <a
+                href={mobileWhatsappUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="premium-cta inline-flex items-center justify-center w-full mt-2 py-2.5 px-4 bg-[#002141] text-[#FAF9F7] text-xs font-semibold tracking-wider uppercase rounded-xs"
               >
                 Échanger sur WhatsApp
-              </a>
+              </a>}
             </div>
           </div>
         </div>

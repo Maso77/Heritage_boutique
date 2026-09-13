@@ -9,6 +9,8 @@ import {
   fetchCurrentSessionProfile,
   fetchUserOrdersFromSupabase
 } from '../../lib/supabase';
+import { usePublicContent } from '../../lib/public-content';
+import { whatsappHref } from '../../lib/site-contact';
 import { Order, UserProfile } from '../../types';
 import {
   User,
@@ -51,6 +53,8 @@ const ABIDJAN_COMMUNES = [
 
 export const AccountView: React.FC<AccountViewProps> = ({ navigate }) => {
   const { userEmail, loginUser, logoutUser, orders: storeOrders } = useStore();
+  const { siteSettings } = usePublicContent();
+  const orderSupportWhatsappUrl = whatsappHref(siteSettings, 'Bonjour Maison HERITAGE, je souhaite une information sur le suivi de ma commande.');
 
   // Auth Mode: login vs register
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
@@ -722,17 +726,15 @@ export const AccountView: React.FC<AccountViewProps> = ({ navigate }) => {
                             Dernier statut : {ord.statusHistory?.[ord.statusHistory.length - 1]?.note || 'Enregistrée'}
                           </span>
                         </div>
-                        <a
-                          href={`https://wa.me/2250707181560?text=${encodeURIComponent(
-                            `Bonjour Maison HERITAGE, je souhaite une information sur le suivi de ma commande ${ord.orderNumber}.`
-                          )}`}
+                        {orderSupportWhatsappUrl && <a
+                          href={whatsappHref(siteSettings, `Bonjour Maison HERITAGE, je souhaite une information sur le suivi de ma commande ${ord.orderNumber}.`)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-[#002141] hover:text-[#AC854B] font-semibold text-xs inline-flex items-center gap-1.5"
                         >
                           <span>Assistance WhatsApp pour cette pièce</span>
                           <ChevronRight className="w-3.5 h-3.5" />
-                        </a>
+                        </a>}
                       </div>
                     </div>
                   ))

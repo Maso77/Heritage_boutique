@@ -8,6 +8,7 @@ import {
   fetchCurrentSessionProfile,
   fetchUserProfile
 } from '../../lib/supabase';
+import { usePublicContent } from '../../lib/public-content';
 import {
   ShieldCheck,
   Truck,
@@ -28,6 +29,7 @@ interface CheckoutViewProps {
 
 export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
   const { cart, cartSubtotal, createOrder, userEmail, loginUser } = useStore();
+  const { siteSettings } = usePublicContent();
 
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
@@ -632,7 +634,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
                       />
                     </div>
                     <p className="text-[11px] text-[#3A3A3A] mb-2">
-                      Accueil à la Maison HERITAGE à Yopougon, Abidjan.
+                      Accueil à la Maison HERITAGE {siteSettings?.address ? `à ${siteSettings.address}` : 'sur rendez-vous'}.
                     </p>
                     <span className="font-bold text-xs text-[#AC854B]">Gratuit</span>
                   </label>

@@ -15,6 +15,7 @@ import {
   Share2
 } from 'lucide-react';
 import { ShareModal } from './ShareModal';
+import { whatsappHref } from '../../lib/site-contact';
 
 interface ProductDetailViewProps {
   product: Product;
@@ -44,8 +45,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, n
   };
 
   const whatsappMessage = `Bonjour HERITAGE, je souhaite un conseil au sujet de la pièce : ${product.name} (Réf. ${product.reference}).`;
-  const whatsappNumber = (siteSettings?.whatsapp_phone || siteSettings?.phone || '').replace(/\D/g, '');
-  const whatsappUrl = whatsappNumber ? `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(whatsappMessage)}` : '';
+  const whatsappUrl = whatsappHref(siteSettings, whatsappMessage);
   const applicableInformation = [
     { title: 'Provenance de la pièce', value: product.provenanceSummary, icon: ShieldCheck },
     { title: 'Garantie et service', value: product.warrantySummary, icon: Clock },

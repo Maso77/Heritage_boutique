@@ -1,11 +1,13 @@
 import React from 'react';
 import { ArrowRight, Compass, ShieldCheck, HeartHandshake } from 'lucide-react';
+import { usePublicContent } from '../../lib/public-content';
 
 interface AboutViewProps {
   navigate: (route: string) => void;
 }
 
 export const AboutView: React.FC<AboutViewProps> = ({ navigate }) => {
+  const { siteSettings } = usePublicContent();
   return (
     <div className="bg-[#FAF9F7] min-h-screen pt-24 pb-24">
       {/* Hero of About */}
@@ -46,7 +48,7 @@ export const AboutView: React.FC<AboutViewProps> = ({ navigate }) => {
           </h2>
           <div className="space-y-4 text-sm text-[#3A3A3A] leading-relaxed">
             <p>
-              Établie à Yopougon, Abidjan, la Maison <strong>HERITAGE</strong> s'est construite
+              Établie à {siteSettings?.address || 'Abidjan, Côte d’Ivoire'}, la Maison <strong>HERITAGE</strong> s'est construite
               autour d'une vocation claire : offrir aux passionnés et connaisseurs de Côte d'Ivoire un
               accès rigoureux, sécurisé et transparent aux plus beaux calibres de l'horlogerie
               suisse et internationale.

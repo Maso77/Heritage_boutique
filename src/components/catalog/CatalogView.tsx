@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { usePublicContent, xof as formatXOF } from '../../lib/public-content';
+import { whatsappHref } from '../../lib/site-contact';
 import { PublicFeedbackSections } from '../common/PublicFeedbackSections';
 import { ProductCard } from './ProductCard';
 import { FilterState, Product } from '../../types';
@@ -36,7 +37,8 @@ const CATEGORY_NAMES: Record<string, string> = {
 };
 
 export const CatalogView: React.FC<CatalogViewProps> = ({ navigate, initialBrand }) => {
-  const { products: publishedProducts } = usePublicContent();
+  const { products: publishedProducts, siteSettings } = usePublicContent();
+  const whatsappUrl = whatsappHref(siteSettings, 'Bonjour HERITAGE, je consulte votre catalogue et souhaite un conseil.');
 
   // Bornes dynamiques du catalogue
   const { minCatalogPrice, maxCatalogPrice } = useMemo(() => {
@@ -287,7 +289,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ navigate, initialBrand
               {filteredProducts.length} {filteredProducts.length > 1 ? 'pièces correspondent' : 'pièce correspond'} à votre recherche
             </span>
             <span className="text-[#AC854B] font-serif">·</span>
-            <span className="text-[#3A3A3A]">Abidjan, Côte d'Ivoire</span>
+            <span className="text-[#3A3A3A]">{siteSettings?.address || 'Abidjan, Côte d’Ivoire'}</span>
           </div>
         </div>
 
@@ -871,19 +873,19 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ navigate, initialBrand
               Une référence vous intéresse, mais vous hésitez encore ?
             </h3>
             <p className="text-xs sm:text-sm text-[#3A3A3A] max-w-2xl leading-relaxed">
-              HERITAGE vous accompagne depuis Yopougon, Abidjan. Obtenez une précision technique,
+              HERITAGE vous accompagne à {siteSettings?.address || 'Abidjan'}. Obtenez une précision technique,
               validez la taille sur votre poignet ou organisez une remise en main propre sécurisée.
             </p>
           </div>
-          <a
-            href="https://wa.me/2250707181560?text=Bonjour%20HERITAGE%2C%20je%20consulte%20votre%20catalogue%20de%20montres%20et%20souhaite%20un%20conseil."
+          {whatsappUrl && <a
+            href={whatsappUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="px-6 py-3.5 bg-[#002141] hover:bg-[#AC854B] text-[#FAF9F7] text-xs font-semibold uppercase tracking-widest transition-colors flex items-center gap-2.5 shrink-0 cursor-pointer"
           >
             <MessageCircle className="w-4 h-4 text-[#D6BB8F]" />
             <span>ÉCHANGER AVEC UN CONSEILLER</span>
-          </a>
+          </a>}
         </div>
         <PublicFeedbackSections placement="catalog" />
       </div>
