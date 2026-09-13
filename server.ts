@@ -23,8 +23,23 @@ type AdminProfile = {
   is_active: boolean;
 };
 
+type CustomerProfile = {
+  id: string;
+  email: string | null;
+  full_name: string;
+  phone: string | null;
+  commune: string | null;
+  delivery_address: string | null;
+  role: 'customer';
+  is_active: boolean;
+};
+
 interface AdminRequest extends Request {
   admin?: AdminProfile;
+}
+
+interface CustomerRequest extends Request {
+  customer?: CustomerProfile;
 }
 
 const app = express();
@@ -33,9 +48,13 @@ app.use(express.json({ limit: '12mb' }));
 const adminRegistrationAttempts = new Map<string, { count: number; resetAt: number }>();
 const contactIpAttempts = new Map<string, number[]>();
 const contactEmailAttempts = new Map<string, number[]>();
+const reviewIpAttempts = new Map<string, number[]>();
+const reviewEmailAttempts = new Map<string, number[]>();
 const CONTACT_RATE_WINDOW_MS = 15 * 60 * 1000;
 const CONTACT_MAX_IP_ATTEMPTS = 5;
 const CONTACT_MAX_EMAIL_ATTEMPTS = 3;
+const REVIEW_MAX_IP_ATTEMPTS = 4;
+const REVIEW_MAX_EMAIL_ATTEMPTS = 2;
 const CONTACT_SUBJECTS = new Set([
   'Renseignement sur une montre',
   "Disponibilité d'un modèle",
@@ -56,6 +75,7 @@ const ORDER_STATUSES = new Set([
   'payment_failed'
 ]);
 const DELIVERY_MODES = new Set(['livraison_abidjan', 'retrait_yopougon']);
+const SPENT_ORDER_STATUSES = new Set(['paid', 'processing', 'shipped_or_ready', 'delivered']);
 
 function limitAdminRegistration(req: Request, res: Response, next: NextFunction) {
   const forwarded = req.header('x-forwarded-for')?.split(',')[0]?.trim();
@@ -206,6 +226,48 @@ function csvCell(value: unknown) {
   return `"${String(value ?? '').replace(/"/g, '""')}"`;
 }
 
+function customerTotals(orders: any[]) {
+  return {
+    order_count: orders.length,
+    total_spent_xof: orders
+      .filter((order) => SPENT_ORDER_STATUSES.has(String(order.status || '')))
+      .reduce((sum, order) => sum + numberValue(order.total_xof, 0), 0)
+  };
+}
+
+function ordersByCustomer(profiles: any[], orders: any[]) {
+  const byIdentifier = new Map<string, any[]>();
+  orders.forEach((order) => {
+    [order.user_id, text(order.customer_email, 180).toLowerCase()].filter(Boolean).forEach((identifier) => {
+      const key = String(identifier);
+      const current = byIdentifier.get(key) || [];
+      if (!current.some((item) => item.id === order.id)) current.push(order);
+      byIdentifier.set(key, current);
+    });
+  });
+
+  return profiles.map((profile) => {
+    const customerOrders = byIdentifier.get(String(profile.id)) || byIdentifier.get(text(profile.email, 180).toLowerCase()) || [];
+    return { ...profile, ...customerTotals(customerOrders) };
+  });
+}
+
+async function customerDirectory(admin: SupabaseClient) {
+  const [{ data: profiles, error: profilesError }, { data: orders, error: ordersError }] = await Promise.all([
+    admin
+      .from('profiles')
+      .select('id, email, full_name, is_active, created_at')
+      .eq('role', 'customer')
+      .order('created_at', { ascending: false }),
+    admin
+      .from('orders')
+      .select('id, user_id, customer_email, total_xof, status, created_at')
+  ]);
+  if (profilesError) throw profilesError;
+  if (ordersError) throw ordersError;
+  return ordersByCustomer(profiles || [], orders || []);
+}
+
 async function writeAudit(
   adminId: string,
   action: string,
@@ -256,6 +318,38 @@ async function requireAdmin(req: AdminRequest, res: Response, next: NextFunction
     next();
   } catch {
     return sendError(res, 503, 'Le service administrateur est indisponible.');
+  }
+}
+
+async function requireCustomer(req: CustomerRequest, res: Response, next: NextFunction) {
+  const authorization = req.header('authorization') || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  if (!token) return sendError(res, 401, 'Connectez-vous à votre compte client pour continuer.');
+
+  try {
+    const admin = getSupabaseAdmin();
+    const { data: authData, error: authError } = await admin.auth.getUser(token);
+    if (authError || !authData.user) {
+      return sendError(res, 401, 'Votre session client a expiré. Connectez-vous de nouveau.');
+    }
+
+    const { data: profile, error: profileError } = await admin
+      .from('profiles')
+      .select('id, email, full_name, phone, commune, delivery_address, role, is_active')
+      .eq('id', authData.user.id)
+      .maybeSingle();
+
+    if (profileError || !profile || profile.role !== 'customer') {
+      return sendError(res, 403, 'Ce compte ne dispose pas d’un accès client.');
+    }
+    if (!profile.is_active) {
+      return sendError(res, 403, 'Ce compte client est désactivé. Contactez la Maison HERITAGE si vous pensez qu’il s’agit d’une erreur.');
+    }
+
+    req.customer = profile as CustomerProfile;
+    next();
+  } catch {
+    return sendError(res, 503, 'Le service des comptes clients est indisponible.');
   }
 }
 
@@ -627,9 +721,6 @@ function resourcePayload(resource: ResourceKey, body: Record<string, unknown>, a
     payload.is_featured_home = Boolean(payload.is_featured_home);
     payload.is_featured_contact = Boolean(payload.is_featured_contact);
     payload.merchant_response = text(payload.merchant_response, 3000) || null;
-    if (payload.status === 'approved' && !payload.verified_purchase && !payload.manually_validated) {
-      payload.status = 'pending';
-    }
     if (payload.merchant_response) {
       payload.responded_at = new Date().toISOString();
       payload.responded_by = adminId;
@@ -843,11 +934,16 @@ app.get('/api/public/faqs', async (req: Request, res: Response) => {
       .eq('is_active', true)
       .order('sort_order');
     if (error) throw error;
-    const filtered = (data || []).filter((faq: any) => {
-      const placements = Array.isArray(faq.placements) ? faq.placements : [];
-      return !placement || placements.includes(placement) || faq.placement === placement || faq.placement === 'all';
+    const normalized = (data || []).map((faq: any) => {
+      const placements = Array.isArray(faq.placements)
+        ? faq.placements.map(String).filter((value: string) => ['home', 'catalog', 'contact'].includes(value))
+        : faq.placement === 'all'
+          ? ['home', 'catalog', 'contact']
+          : ['home', 'catalog', 'contact'].includes(faq.placement) ? [faq.placement] : [];
+      return { ...faq, placements };
     });
-    res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
+    const filtered = normalized.filter((faq: any) => !placement || faq.placements.includes(placement));
+    res.setHeader('Cache-Control', 'no-store');
     res.json(filtered);
   } catch {
     sendError(res, 503, 'La foire aux questions est temporairement indisponible.');
@@ -860,9 +956,9 @@ app.get('/api/public/reviews', async (req: Request, res: Response) => {
   try {
     let query = getSupabaseAdmin()
       .from('product_reviews')
-      .select('id, product_id, author_name, rating, title, body, merchant_response, created_at, is_featured_home, is_featured_contact')
+      .select('id, product_id, author_name, rating, title, body, merchant_response, created_at, status, is_featured_home, is_featured_contact')
       .eq('status', 'approved')
-      .or('verified_purchase.eq.true,manually_validated.eq.true')
+      .order('rating', { ascending: false })
       .order('created_at', { ascending: false });
     if (productId) query = query.eq('product_id', productId);
     const { data, error } = await query.limit(placement ? 12 : 100);
@@ -878,6 +974,7 @@ app.get('/api/public/reviews', async (req: Request, res: Response) => {
       : { data: [], error: null };
     if (productError) throw productError;
     const productsById = new Map((products || []).map((product: any) => [String(product.id), product]));
+    res.setHeader('Cache-Control', 'no-store');
     res.json(featured.map((review: any) => ({ ...review, product: review.product_id ? productsById.get(String(review.product_id)) || null : null })));
   } catch {
     sendError(res, 503, 'Les avis sont temporairement indisponibles.');
@@ -1067,6 +1164,18 @@ app.post('/api/public/orders', async (req: Request, res: Response) => {
       return sendError(res, 401, 'Votre session a expiré. Connectez-vous de nouveau avant de commander.');
     }
 
+    const { data: customerProfile, error: customerProfileError } = await admin
+      .from('profiles')
+      .select('full_name, role, is_active')
+      .eq('id', authData.user.id)
+      .maybeSingle();
+    if (customerProfileError || !customerProfile || customerProfile.role !== 'customer') {
+      return sendError(res, 403, 'Un compte client actif est requis pour finaliser cette commande.');
+    }
+    if (!customerProfile.is_active) {
+      return sendError(res, 403, 'Ce compte client est désactivé. Contactez la Maison HERITAGE si vous pensez qu’il s’agit d’une erreur.');
+    }
+
     const customerEmail = text(authData.user.email, 180).toLowerCase() || text(orderData.customer_email, 180).toLowerCase();
     if (!validEmail(customerEmail)) {
       return sendError(res, 400, 'Votre compte ne comporte pas d’adresse e-mail valide.');
@@ -1130,8 +1239,7 @@ app.post('/api/public/orders', async (req: Request, res: Response) => {
       deliveryMode === 'retrait_yopougon' ? 'Retrait à la Maison HERITAGE, Yopougon' : null
     );
     const now = new Date().toISOString();
-    const profileResult = await admin.from('profiles').select('full_name').eq('id', authData.user.id).maybeSingle();
-    const actorName = text(profileResult.data?.full_name, 180) || customerName;
+    const actorName = text(customerProfile.full_name, 180) || customerName;
     const initialHistory = [{
       status: 'pending_payment',
       timestamp: now,
@@ -1193,6 +1301,50 @@ app.post('/api/public/orders', async (req: Request, res: Response) => {
       null
     );
 
+    // Les coordonnées servant réellement à la commande deviennent des
+    // données de compte utiles au suivi : elles restent privées et ne sont
+    // jamais lues directement par le navigateur.
+    try {
+      await admin
+        .from('profiles')
+        .update({
+          full_name: customerName,
+          phone: customerPhone,
+          commune: customerCommune,
+          delivery_address: recordedDeliveryAddress
+        })
+        .eq('id', authData.user.id)
+        .eq('role', 'customer');
+
+      if (recordedDeliveryAddress && recordedDeliveryAddress.length >= 4) {
+        const { data: existingAddress } = await admin
+          .from('customer_addresses')
+          .select('id')
+          .eq('user_id', authData.user.id)
+          .eq('address_line', recordedDeliveryAddress)
+          .maybeSingle();
+        if (!existingAddress) {
+          const { count: addressCount } = await admin
+            .from('customer_addresses')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', authData.user.id);
+          await admin.from('customer_addresses').insert({
+            user_id: authData.user.id,
+            label: 'Adresse de livraison',
+            recipient_name: customerName,
+            phone: customerPhone,
+            commune: customerCommune,
+            address_line: recordedDeliveryAddress,
+            is_default: (addressCount || 0) === 0
+          });
+        }
+      }
+    } catch (accountSyncError) {
+      // A legacy database without the customer-account migration must not
+      // make an already-recorded order appear as failed to the customer.
+      console.warn('Unable to synchronize customer account details:', accountSyncError);
+    }
+
     res.status(201).json({
       success: true,
       order: { ...insertedOrder, order_items: orderItems, items: orderItems, status_events: initialHistory }
@@ -1200,6 +1352,252 @@ app.post('/api/public/orders', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('Error in POST /api/public/orders:', err);
     sendError(res, err?.statusCode === 409 ? 409 : 400, err?.message || 'L’enregistrement de la commande a échoué.');
+  }
+});
+
+app.post('/api/public/reviews', async (req: Request, res: Response) => {
+  // Honeypot: reply neutrally so automated senders cannot distinguish a trap.
+  if (text(req.body?.website, 200)) return res.status(201).json({ success: true });
+
+  const productId = text(req.body?.product_id, 120) || null;
+  const payload = {
+    product_id: productId,
+    author_name: text(req.body?.author_name, 160),
+    author_email: text(req.body?.author_email, 180).toLowerCase(),
+    rating: integerValue(req.body?.rating, 0),
+    title: text(req.body?.title, 180) || null,
+    body: text(req.body?.body, 3000),
+    status: 'pending',
+    verified_purchase: false,
+    manually_validated: false,
+    is_featured_home: false,
+    is_featured_contact: false
+  };
+
+  if (
+    payload.author_name.length < 2 ||
+    !validEmail(payload.author_email) ||
+    payload.rating < 1 ||
+    payload.rating > 5 ||
+    payload.body.length < 10
+  ) {
+    return sendError(res, 400, 'Veuillez renseigner votre nom, votre e-mail, une note entre 1 et 5 et un avis d’au moins 10 caractères.');
+  }
+
+  const now = Date.now();
+  const clientIp = getClientIp(req);
+  if (
+    countRecentAttempts(reviewIpAttempts, clientIp, now) >= REVIEW_MAX_IP_ATTEMPTS ||
+    countRecentAttempts(reviewEmailAttempts, payload.author_email, now) >= REVIEW_MAX_EMAIL_ATTEMPTS
+  ) {
+    return sendError(res, 429, 'Trop d’avis ont été transmis récemment. Veuillez réessayer plus tard.');
+  }
+
+  try {
+    const admin = getSupabaseAdmin();
+    if (productId) {
+      const { data: product, error: productError } = await admin
+        .from('products')
+        .select('id')
+        .eq('id', productId)
+        .eq('status', 'published')
+        .maybeSingle();
+      if (productError) throw productError;
+      if (!product) return sendError(res, 400, 'Cette fiche produit n’est plus disponible pour recevoir un avis.');
+    }
+    const { error } = await admin.from('product_reviews').insert(payload);
+    if (error) throw error;
+    registerContactAttempt(reviewIpAttempts, clientIp, now);
+    registerContactAttempt(reviewEmailAttempts, payload.author_email, now);
+    res.status(201).json({ success: true });
+  } catch {
+    sendError(res, 503, 'Votre avis ne peut pas être transmis pour le moment.');
+  }
+});
+
+// Customer account data is deliberately served through this verified backend
+// boundary. The browser only supplies its Supabase access token; it never
+// receives a service-role key or direct table permissions.
+app.use('/api/customer', requireCustomer);
+
+app.get('/api/customer/profile', async (req: CustomerRequest, res: Response) => {
+  try {
+    const admin = getSupabaseAdmin();
+    const { data: addresses, error } = await admin
+      .from('customer_addresses')
+      .select('id, label, recipient_name, phone, commune, address_line, is_default, created_at')
+      .eq('user_id', req.customer!.id)
+      .order('is_default', { ascending: false })
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+
+    res.json({
+      profile: req.customer,
+      addresses: addresses || []
+    });
+  } catch (error) {
+    sendSupabaseFailure(res, error, 'Le profil client ne peut pas être chargé pour le moment.');
+  }
+});
+
+app.get('/api/customer/orders', async (req: CustomerRequest, res: Response) => {
+  try {
+    const admin = getSupabaseAdmin();
+    const { data, error } = await admin
+      .from('orders')
+      .select('id, order_number, status, customer_name, customer_email, customer_phone, customer_commune, customer_delivery_address, customer_notes, delivery_mode, subtotal_xof, delivery_cost_xof, total_xof, status_history, created_at, order_items(*)')
+      .eq('user_id', req.customer!.id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    const orders = (data || []).map((order: any) => ({
+      id: order.id,
+      order_number: order.order_number,
+      status: order.status,
+      customer_name: order.customer_name,
+      customer_email: order.customer_email,
+      customer_phone: order.customer_phone,
+      customer_commune: order.customer_commune,
+      customer_delivery_address: order.customer_delivery_address,
+      customer_notes: order.customer_notes,
+      delivery_mode: order.delivery_mode,
+      subtotal_xof: order.subtotal_xof,
+      delivery_cost_xof: order.delivery_cost_xof,
+      total_xof: order.total_xof,
+      status_history: jsonArray(order.status_history),
+      created_at: order.created_at,
+      order_items: Array.isArray(order.order_items) ? order.order_items.map((item: any) => ({
+        id: item.id,
+        product_id: item.product_id,
+        product_sku: item.product_sku,
+        product_name: item.product_name || item.title,
+        product_reference: item.product_reference || item.product_ref,
+        quantity: item.quantity,
+        price_xof: item.unit_price_xof ?? item.price_xof ?? item.price,
+        image_url: item.image_url || null
+      })) : []
+    }));
+
+    res.json({ orders });
+  } catch (error) {
+    sendSupabaseFailure(res, error, 'L’historique des commandes ne peut pas être chargé pour le moment.');
+  }
+});
+
+app.get('/api/customer/cart', async (req: CustomerRequest, res: Response) => {
+  try {
+    const { data, error } = await getSupabaseAdmin()
+      .from('customer_cart_items')
+      .select('product_id, quantity, updated_at')
+      .eq('user_id', req.customer!.id)
+      .order('updated_at', { ascending: false });
+    if (error) throw error;
+    res.json({ items: data || [] });
+  } catch (error) {
+    sendSupabaseFailure(res, error, 'Le panier client ne peut pas être chargé pour le moment.');
+  }
+});
+
+app.put('/api/customer/cart/:productId', async (req: CustomerRequest, res: Response) => {
+  const productId = text(req.params.productId, 120);
+  const quantity = integerValue(req.body?.quantity, 0);
+  if (!productId || quantity < 1 || quantity > 20) {
+    return sendError(res, 400, 'La quantité demandée est invalide.');
+  }
+
+  try {
+    const admin = getSupabaseAdmin();
+    const { data: product, error: productError } = await admin
+      .from('products')
+      .select('id, status, stock_quantity, stock_policy')
+      .eq('id', productId)
+      .eq('status', 'published')
+      .maybeSingle();
+    if (productError) throw productError;
+    if (!product) return sendError(res, 404, 'Cette pièce n’est plus disponible.');
+    if (text(product.stock_policy, 30) !== 'on_order' && integerValue(product.stock_quantity) < quantity) {
+      return sendError(res, 409, 'La quantité demandée dépasse le stock disponible.');
+    }
+
+    const { data, error } = await admin
+      .from('customer_cart_items')
+      .upsert({ user_id: req.customer!.id, product_id: productId, quantity }, { onConflict: 'user_id,product_id' })
+      .select('product_id, quantity, updated_at')
+      .single();
+    if (error) throw error;
+    res.json({ item: data });
+  } catch (error) {
+    sendSupabaseFailure(res, error, 'Le panier client ne peut pas être mis à jour pour le moment.');
+  }
+});
+
+app.delete('/api/customer/cart/:productId', async (req: CustomerRequest, res: Response) => {
+  const productId = text(req.params.productId, 120);
+  if (!productId) return sendError(res, 400, 'Article du panier invalide.');
+  try {
+    const { error } = await getSupabaseAdmin()
+      .from('customer_cart_items')
+      .delete()
+      .eq('user_id', req.customer!.id)
+      .eq('product_id', productId);
+    if (error) throw error;
+    res.status(204).end();
+  } catch (error) {
+    sendSupabaseFailure(res, error, 'Le panier client ne peut pas être mis à jour pour le moment.');
+  }
+});
+
+app.get('/api/customer/wishlist', async (req: CustomerRequest, res: Response) => {
+  try {
+    const { data, error } = await getSupabaseAdmin()
+      .from('customer_wishlist_items')
+      .select('product_id, created_at')
+      .eq('user_id', req.customer!.id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ items: data || [] });
+  } catch (error) {
+    sendSupabaseFailure(res, error, 'La liste d’envies ne peut pas être chargée pour le moment.');
+  }
+});
+
+app.put('/api/customer/wishlist/:productId', async (req: CustomerRequest, res: Response) => {
+  const productId = text(req.params.productId, 120);
+  if (!productId) return sendError(res, 400, 'Pièce invalide.');
+  try {
+    const admin = getSupabaseAdmin();
+    const { data: product, error: productError } = await admin
+      .from('products')
+      .select('id')
+      .eq('id', productId)
+      .eq('status', 'published')
+      .maybeSingle();
+    if (productError) throw productError;
+    if (!product) return sendError(res, 404, 'Cette pièce n’est plus disponible.');
+
+    const { error } = await admin
+      .from('customer_wishlist_items')
+      .upsert({ user_id: req.customer!.id, product_id: productId }, { onConflict: 'user_id,product_id', ignoreDuplicates: true });
+    if (error) throw error;
+    res.status(204).end();
+  } catch (error) {
+    sendSupabaseFailure(res, error, 'La liste d’envies ne peut pas être mise à jour pour le moment.');
+  }
+});
+
+app.delete('/api/customer/wishlist/:productId', async (req: CustomerRequest, res: Response) => {
+  const productId = text(req.params.productId, 120);
+  if (!productId) return sendError(res, 400, 'Pièce invalide.');
+  try {
+    const { error } = await getSupabaseAdmin()
+      .from('customer_wishlist_items')
+      .delete()
+      .eq('user_id', req.customer!.id)
+      .eq('product_id', productId);
+    if (error) throw error;
+    res.status(204).end();
+  } catch (error) {
+    sendSupabaseFailure(res, error, 'La liste d’envies ne peut pas être mise à jour pour le moment.');
   }
 });
 
@@ -1974,61 +2372,60 @@ app.patch('/api/admin/invitations/:id/revoke', async (req: AdminRequest, res: Re
 
 app.get('/api/admin/users', async (_req: AdminRequest, res: Response) => {
   try {
+    res.json(await customerDirectory(getSupabaseAdmin()));
+  } catch (error) {
+    sendSupabaseFailure(res, error, 'La liste des comptes clients est indisponible.');
+  }
+});
+
+app.get('/api/admin/users/:id([0-9a-fA-F-]+)', async (req: AdminRequest, res: Response) => {
+  try {
     const admin = getSupabaseAdmin();
-    let profilesData: any[] = [];
-    let ordersData: any[] = [];
-
-    const { data: profiles, error: pErr } = await admin
+    const { data: profile, error: profileError } = await admin
       .from('profiles')
-      .select('*')
-      .order('created_at', { ascending: false });
+      .select('id, email, full_name, phone, commune, delivery_address, is_active, created_at')
+      .eq('id', req.params.id)
+      .eq('role', 'customer')
+      .maybeSingle();
+    if (profileError) throw profileError;
+    if (!profile) return sendError(res, 404, 'Compte client introuvable.');
 
-    if (pErr) {
-      console.error('Warning/Error fetching profiles for users list:', pErr);
-    } else {
-      profilesData = (profiles || []).filter((p: any) => p.role !== 'admin');
-    }
+    const [addressesResult, ownOrdersResult, emailOrdersResult] = await Promise.all([
+      admin
+        .from('customer_addresses')
+        .select('id, label, recipient_name, phone, commune, address_line, is_default, created_at')
+        .eq('user_id', profile.id)
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: true }),
+      admin
+        .from('orders')
+        .select('id, order_number, status, total_xof, created_at')
+        .eq('user_id', profile.id)
+        .order('created_at', { ascending: false }),
+      profile.email
+        ? admin
+          .from('orders')
+          .select('id, order_number, status, total_xof, created_at')
+          .eq('customer_email', profile.email)
+          .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [], error: null })
+    ]);
+    if (addressesResult.error) throw addressesResult.error;
+    if (ownOrdersResult.error) throw ownOrdersResult.error;
+    if (emailOrdersResult.error) throw emailOrdersResult.error;
 
-    const { data: orders, error: oErr } = await admin
-      .from('orders')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const orders = [...(ownOrdersResult.data || []), ...(emailOrdersResult.data || [])]
+      .filter((order, index, all) => all.findIndex((candidate) => candidate.id === order.id) === index)
+      .sort((first, second) => new Date(second.created_at || 0).getTime() - new Date(first.created_at || 0).getTime());
 
-    if (oErr) {
-      console.error('Warning/Error fetching orders for users list:', oErr);
-    } else {
-      ordersData = orders || [];
-    }
-
-    const orderLookup = new Map<string, any[]>();
-    ordersData.forEach((order: any) => {
-      const keys = [order.user_id, order.customer_email?.toLowerCase()].filter(Boolean);
-      keys.forEach((key) => {
-        const existing = orderLookup.get(String(key)) || [];
-        if (!existing.some((o: any) => o.id === order.id)) {
-          existing.push(order);
-        }
-        orderLookup.set(String(key), existing);
-      });
+    res.json({
+      ...profile,
+      ...customerTotals(orders),
+      addresses: addressesResult.data || [],
+      orders
     });
-
-    const result = profilesData.map((profile: any) => {
-      const customerOrders = orderLookup.get(String(profile.id)) || orderLookup.get(String(profile.email || '').toLowerCase()) || [];
-      const validOrders = customerOrders.filter((order: any) => !['cancelled', 'refunded', 'payment_failed'].includes(order.status));
-      const totalSpent = validOrders.reduce((sum: number, order: any) => sum + Number(order.total_xof || 0), 0);
-      return {
-        ...profile,
-        role: profile.role || 'customer',
-        order_count: customerOrders.length,
-        total_spent_xof: totalSpent,
-        orders: customerOrders
-      };
-    });
-
-    res.json(result);
-  } catch (err: any) {
-    console.error('Error in GET /api/admin/users:', err);
-    res.json([]);
+  } catch (error) {
+    sendSupabaseFailure(res, error, 'La fiche client est indisponible.');
   }
 });
 
@@ -2037,20 +2434,26 @@ app.patch('/api/admin/users/:id', async (req: AdminRequest, res: Response) => {
 
   try {
     const admin = getSupabaseAdmin();
-    try {
-      await admin.auth.admin.updateUserById(req.params.id, {
-        ban_duration: req.body.is_active ? 'none' : '876000h'
-      });
-    } catch (authErr) {
-      console.warn('Supabase Auth update warning (profile only or external auth):', authErr);
-    }
+    const { data: target, error: targetError } = await admin
+      .from('profiles')
+      .select('id, full_name, email')
+      .eq('id', req.params.id)
+      .eq('role', 'customer')
+      .maybeSingle();
+    if (targetError) throw targetError;
+    if (!target) return sendError(res, 404, 'Compte client introuvable.');
+
+    const { error: authError } = await admin.auth.admin.updateUserById(req.params.id, {
+      ban_duration: req.body.is_active ? 'none' : '876000h'
+    });
+    if (authError) throw authError;
 
     const { data, error } = await admin
       .from('profiles')
-      .update({ is_active: req.body.is_active, role: 'customer' })
+      .update({ is_active: req.body.is_active })
       .eq('id', req.params.id)
-      .neq('role', 'admin')
-      .select()
+      .eq('role', 'customer')
+      .select('id, email, full_name, is_active, created_at')
       .single();
 
     if (error) throw error;
@@ -2064,49 +2467,18 @@ app.patch('/api/admin/users/:id', async (req: AdminRequest, res: Response) => {
 
 app.get('/api/admin/users/export.csv', async (_req: AdminRequest, res: Response) => {
   try {
-    const admin = getSupabaseAdmin();
-    const { data: profiles } = await admin.from('profiles').select('*').order('created_at', { ascending: false });
-    const { data: orders } = await admin.from('orders').select('*');
-
-    const profilesData = (profiles || []).filter((p: any) => p.role !== 'admin');
-    const orderLookup = new Map<string, any[]>();
-
-    (orders || []).forEach((order: any) => {
-      const keys = [order.user_id, order.customer_email?.toLowerCase()].filter(Boolean);
-      keys.forEach((key) => {
-        const existing = orderLookup.get(String(key)) || [];
-        if (!existing.some((o: any) => o.id === order.id)) {
-          existing.push(order);
-        }
-        orderLookup.set(String(key), existing);
-      });
-    });
-
-    const rows = profilesData.map((profile: any) => {
-      const customerOrders = orderLookup.get(String(profile.id)) || orderLookup.get(String(profile.email || '').toLowerCase()) || [];
-      const validOrders = customerOrders.filter((o: any) => !['cancelled', 'refunded', 'payment_failed'].includes(o.status));
-      const totalSpent = validOrders.reduce((sum: number, o: any) => sum + Number(o.total_xof || 0), 0);
-      const address = profile.delivery_address || profile.shipping_address || profile.commune || 'Non renseignée';
-
-      return {
-        full_name: profile.full_name || 'Client',
-        email: profile.email || '',
-        phone: profile.phone || '',
-        commune: profile.commune || '',
-        address,
-        order_count: customerOrders.length,
-        total_spent_xof: totalSpent,
-        is_active: profile.is_active !== false ? 'Actif' : 'Bloqué/Désactivé',
-        created_at: profile.created_at ? new Date(profile.created_at).toLocaleDateString('fr-FR') : ''
-      };
-    });
+    const rows = (await customerDirectory(getSupabaseAdmin())).map((profile: any) => ({
+      full_name: profile.full_name || 'Client',
+      email: profile.email || '',
+      order_count: profile.order_count,
+      total_spent_xof: profile.total_spent_xof,
+      is_active: profile.is_active !== false ? 'Actif' : 'Bloqué/Désactivé',
+      created_at: profile.created_at ? new Date(profile.created_at).toLocaleDateString('fr-FR') : ''
+    }));
 
     const columns = [
       { key: 'full_name', label: 'Nom Complet' },
       { key: 'email', label: 'Email' },
-      { key: 'phone', label: 'Téléphone' },
-      { key: 'commune', label: 'Commune' },
-      { key: 'address', label: 'Adresse de Livraison' },
       { key: 'order_count', label: 'Nombre de Commandes' },
       { key: 'total_spent_xof', label: 'Total Dépensé (FCFA)' },
       { key: 'is_active', label: 'Statut du Compte' },
@@ -2419,6 +2791,18 @@ app.get('/api/admin/resources/:resource', async (req: AdminRequest, res: Respons
     else query = query.order('updated_at', { ascending: false });
     const { data, error } = await query;
     if (error) throw error;
+    if (resource === 'reviews') {
+      const productIds = (data || []).map((review: any) => review.product_id).filter(Boolean);
+      const { data: products, error: productError } = productIds.length
+        ? await getSupabaseAdmin().from('products').select('id, name, reference').in('id', productIds)
+        : { data: [], error: null };
+      if (productError) throw productError;
+      const productsById = new Map((products || []).map((product: any) => [String(product.id), product]));
+      return res.json((data || []).map((review: any) => ({
+        ...review,
+        product: review.product_id ? productsById.get(String(review.product_id)) || null : null
+      })));
+    }
     res.json(data || []);
   } catch {
     sendError(res, 503, 'Cette ressource est indisponible.');

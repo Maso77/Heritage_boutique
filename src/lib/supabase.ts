@@ -14,6 +14,85 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   }
 });
 
+type CustomerRequestOptions = Omit<RequestInit, 'body'> & { body?: Record<string, unknown> };
+
+async function customerRequest<T>(path: string, options: CustomerRequestOptions = {}): Promise<T> {
+  const { data, error } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (error || !token) throw new Error('Connectez-vous à votre compte client pour continuer.');
+
+  const response = await fetch(`/api/customer${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {})
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+  if (response.status === 204) return undefined as T;
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'La requête relative à votre compte a échoué.');
+  return payload as T;
+}
+
+const mapCustomerProfile = (profile: Record<string, any>): UserProfile => ({
+  id: String(profile.id),
+  email: profile.email || undefined,
+  phone: profile.phone || undefined,
+  fullName: String(profile.full_name || ''),
+  commune: profile.commune || undefined,
+  deliveryAddress: profile.delivery_address || undefined,
+  role: profile.role === 'admin' ? 'admin' : 'customer',
+  createdAt: profile.created_at || undefined
+});
+
+export type CustomerAddress = {
+  id: string;
+  label: string;
+  recipient_name: string | null;
+  phone: string | null;
+  commune: string | null;
+  address_line: string;
+  is_default: boolean;
+};
+
+export async function fetchCurrentCustomerAccount(): Promise<{ profile: UserProfile; addresses: CustomerAddress[] } | null> {
+  try {
+    const payload = await customerRequest<{ profile: Record<string, any>; addresses: CustomerAddress[] }>('/profile');
+    return { profile: mapCustomerProfile(payload.profile), addresses: Array.isArray(payload.addresses) ? payload.addresses : [] };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchCustomerCart() {
+  return customerRequest<{ items: Array<{ product_id: string; quantity: number }> }>('/cart');
+}
+
+export async function saveCustomerCartItem(productId: string, quantity: number) {
+  return customerRequest<{ item: { product_id: string; quantity: number } }>(`/cart/${encodeURIComponent(productId)}`, {
+    method: 'PUT',
+    body: { quantity }
+  });
+}
+
+export async function removeCustomerCartItem(productId: string) {
+  return customerRequest<void>(`/cart/${encodeURIComponent(productId)}`, { method: 'DELETE' });
+}
+
+export async function fetchCustomerWishlist() {
+  return customerRequest<{ items: Array<{ product_id: string }> }>('/wishlist');
+}
+
+export async function addCustomerWishlistItem(productId: string) {
+  return customerRequest<void>(`/wishlist/${encodeURIComponent(productId)}`, { method: 'PUT' });
+}
+
+export async function removeCustomerWishlistItem(productId: string) {
+  return customerRequest<void>(`/wishlist/${encodeURIComponent(productId)}`, { method: 'DELETE' });
+}
+
 /**
  * Inscription d'un nouveau visiteur par Email uniquement
  * avec possibilité de renseigner un numéro WhatsApp pour le suivi
@@ -41,6 +120,7 @@ export async function signUpWithSupabase({
       email: cleanEmail,
       password,
       options: {
+        emailRedirectTo: `${window.location.origin}/compte`,
         data: {
           full_name: fullName.trim(),
           phone: cleanWhatsApp,
@@ -57,25 +137,6 @@ export async function signUpWithSupabase({
         throw new Error('Un compte existe déjà avec cette adresse e-mail. Veuillez vous connecter directement.');
       }
       throw error;
-    }
-
-    // Mise à jour ou insertion dans la table profiles en tant que Compte Client / Visiteur (role = 'customer')
-    if (data.user) {
-      try {
-        await supabase.from('profiles').upsert({
-          id: data.user.id,
-          full_name: fullName.trim(),
-          email: cleanEmail,
-          phone: cleanWhatsApp || null,
-          commune: commune || '',
-          delivery_address: deliveryAddress || '',
-          role: 'customer',
-          is_active: true
-        });
-      } catch (e) {
-        // RLS ou table non encore migrée : ignoré car auth.users stocke déjà les métadonnées
-        console.warn('Profile table sync info:', e);
-      }
     }
 
     return { user: data.user, session: data.session };
@@ -104,14 +165,33 @@ export async function signInWithSupabase({
     });
 
     if (error) {
+      if (/email not confirmed/i.test(error.message || '')) {
+        throw new Error('Votre adresse e-mail doit être confirmée avant la première connexion. Consultez votre boîte de réception ou demandez un nouvel e-mail de confirmation.');
+      }
+      if (/banned|disabled|not allowed/i.test(error.message || '')) {
+        throw new Error('Ce compte client est désactivé. Contactez la Maison HERITAGE si vous pensez qu’il s’agit d’une erreur.');
+      }
       throw error;
     }
 
     return { user: data.user, session: data.session };
   } catch (err: any) {
     console.error('Erreur connexion Supabase:', err);
+    if (/désactivé|disabled|confirmée|confirmed/i.test(err?.message || '')) throw err;
     throw new Error('Adresse e-mail ou mot de passe incorrect.');
   }
+}
+
+export async function resendSignupConfirmation(email: string) {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes('@')) throw new Error('Saisissez votre adresse e-mail pour recevoir le lien de confirmation.');
+
+  const { error } = await supabase.auth.resend({
+    type: 'signup',
+    email: cleanEmail,
+    options: { emailRedirectTo: `${window.location.origin}/compte` }
+  });
+  if (error) throw new Error("L’e-mail de confirmation n’a pas pu être renvoyé. Réessayez dans quelques instants.");
 }
 
 /**
@@ -126,44 +206,9 @@ export async function signOutSupabase() {
  * Récupération du profil utilisateur
  */
 export async function fetchUserProfile(userId: string): Promise<UserProfile | null> {
-  try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (error || !data) {
-      // Fallback vers les métadonnées auth
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData.user && userData.user.id === userId) {
-        return {
-          id: userData.user.id,
-          email: userData.user.email,
-          phone: userData.user.user_metadata?.phone,
-          fullName: userData.user.user_metadata?.full_name || 'Client HERITAGE',
-          commune: userData.user.user_metadata?.commune,
-          deliveryAddress: userData.user.user_metadata?.delivery_address,
-          role: 'customer'
-        };
-      }
-      return null;
-    }
-
-    return {
-      id: data.id,
-      email: data.email,
-      phone: data.phone,
-      fullName: data.full_name,
-      commune: data.commune,
-      deliveryAddress: data.delivery_address,
-      role: data.role || 'customer',
-      createdAt: data.created_at
-    };
-  } catch (e) {
-    console.warn('Impossible de charger le profil Supabase:', e);
-    return null;
-  }
+  const payload = await customerRequest<{ profile: Record<string, any> }>('/profile');
+  if (String(payload.profile?.id || '') !== userId) return null;
+  return mapCustomerProfile(payload.profile);
 }
 
 /**
@@ -234,23 +279,8 @@ export async function syncOrderToSupabase(order: Order) {
 export async function fetchUserOrdersFromSupabase(email?: string, phone?: string, userId?: string): Promise<Order[]> {
   try {
     if (!email && !phone && !userId) return [];
-
-    let query = supabase.from('orders').select('*, order_items(*)');
-
-    const filters: string[] = [];
-    if (userId) filters.push(`user_id.eq.${userId}`);
-    if (email) filters.push(`customer_email.eq.${email}`);
-    if (phone) filters.push(`customer_phone.eq.${phone}`);
-
-    if (filters.length > 0) {
-      query = query.or(filters.join(','));
-    }
-
-    const { data, error } = await query.order('created_at', { ascending: false });
-
-    if (error || !data) return [];
-
-    return data.map((d: any) => ({
+    const payload = await customerRequest<{ orders: Record<string, any>[] }>('/orders');
+    return (payload.orders || []).map((d: any) => ({
       id: d.id,
       orderNumber: d.order_number,
       createdAt: d.created_at,
@@ -294,7 +324,6 @@ export async function fetchUserOrdersFromSupabase(email?: string, phone?: string
       deliveryCostXOF: Number(d.delivery_cost_xof),
       totalXOF: Number(d.total_xof),
       paymentMethod: d.payment_method,
-      paymentReference: d.payment_reference,
       statusHistory: d.status_history || []
     }));
   } catch (e) {
@@ -303,116 +332,7 @@ export async function fetchUserOrdersFromSupabase(email?: string, phone?: string
   }
 }
 
-/**
- * Récupération de TOUTES les commandes pour le portail administrateur
- */
-export async function fetchAllAdminOrdersFromSupabase(): Promise<Order[]> {
-  try {
-    const { data, error } = await supabase
-      .from('orders')
-      .select('*, order_items(*)')
-      .order('created_at', { ascending: false });
-
-    if (error || !data) return [];
-
-    return data.map((d: any) => ({
-      id: d.id,
-      orderNumber: d.order_number,
-      createdAt: d.created_at,
-      status: d.status,
-      customer: {
-        fullName: d.customer_name,
-        email: d.customer_email,
-        phone: d.customer_phone,
-        commune: d.customer_commune,
-        deliveryAddress: d.customer_delivery_address,
-        notes: d.customer_notes,
-        deliveryMode: d.delivery_mode
-      },
-      items: (d.order_items || []).map((it: any) => ({
-        product: {
-          id: it.product_id || it.id,
-          sku: it.product_sku || '',
-          reference: it.product_reference || '',
-          name: it.product_name,
-          brand: 'Tissot',
-          slug: '',
-          category: 'montres',
-          priceXOF: Number(it.price_xof),
-          stockStatus: 'En stock',
-          stockCount: 1,
-          status: 'published',
-          primaryImage: it.image_url || '/assets/products/tissot-le-locle.jpg',
-          additionalImages: [],
-          shortDescription: '',
-          valueStoryTitle: '',
-          valueStoryText: '',
-          attributes: {} as any,
-          provenanceSummary: '',
-          warrantySummary: '',
-          deliverySummary: '',
-          faq: []
-        },
-        quantity: it.quantity
-      })),
-      subtotalXOF: Number(d.subtotal_xof),
-      deliveryCostXOF: Number(d.delivery_cost_xof),
-      totalXOF: Number(d.total_xof),
-      paymentMethod: d.payment_method,
-      paymentReference: d.payment_reference,
-      statusHistory: d.status_history || []
-    }));
-  } catch (e) {
-    console.warn('Erreur admin commandes Supabase:', e);
-    return [];
-  }
-}
-
-/**
- * Mise à jour du statut d'une commande par l'administrateur
- */
-export async function updateOrderStatusInSupabase(
-  orderId: string,
-  newStatus: string,
-  note: string
-) {
-  try {
-    const { data: current } = await supabase
-      .from('orders')
-      .select('status_history')
-      .eq('id', orderId)
-      .maybeSingle();
-
-    const currentHistory = current?.status_history || [];
-    const updatedHistory = [
-      ...currentHistory,
-      {
-        status: newStatus,
-        timestamp: new Date().toISOString(),
-        note
-      }
-    ];
-
-    const { error } = await supabase
-      .from('orders')
-      .update({
-        status: newStatus,
-        status_history: updatedHistory,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', orderId);
-
-    if (error) throw error;
-    return { success: true };
-  } catch (e: any) {
-    console.error('Erreur mise à jour commande Supabase:', e);
-    return { success: false, error: e.message };
-  }
-}
-
-/**
- * Vérification de l'état de la connexion Supabase et des tables
- */
+/** Vérification limitée au client Auth : les tables privées sont interrogées côté serveur. */
 export async function checkSupabaseConnection() {
   const results = {
     connected: false,
@@ -432,22 +352,6 @@ export async function checkSupabaseConnection() {
     const { error: authErr } = await supabase.auth.getSession();
     results.authWorking = !authErr;
     results.connected = true;
-
-    // 2. Tester table profiles
-    const { error: profErr } = await supabase.from('profiles').select('id').limit(1);
-    results.tables.profiles = !profErr;
-
-    // 3. Tester table products
-    const { error: prodErr } = await supabase.from('products').select('id').limit(1);
-    results.tables.products = !prodErr;
-
-    // 4. Tester table orders
-    const { error: ordErr } = await supabase.from('orders').select('id').limit(1);
-    results.tables.orders = !ordErr;
-
-    // 5. Tester table order_items
-    const { error: itmErr } = await supabase.from('order_items').select('id').limit(1);
-    results.tables.order_items = !itmErr;
 
     return results;
   } catch (e: any) {

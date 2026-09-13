@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { ShareModal } from './ShareModal';
 import { whatsappHref } from '../../lib/site-contact';
+import { PublicReviewForm } from '../common/PublicReviewForm';
 
 interface ProductDetailViewProps {
   product: Product;
@@ -410,6 +411,10 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({ product, n
             </a>
           </div>}
         </div>}
+
+        <div className="mb-16">
+          <PublicReviewForm product={{ id: product.id, name: product.name }} />
+        </div>
       </div>
 
       {/* Share Modal Dialog */}

@@ -15,9 +15,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, navigate }) =
   const { reviews } = usePublicContent();
   const isFavorite = isInWishlist(product.id);
 
-  const productReviews = (reviews || []).filter((r) => String(r.product_id) === String(product.id));
+  const productReviews = (reviews || []).filter((review) => {
+    const rating = Number(review.rating);
+    return String(review.product_id) === String(product.id) && Number.isInteger(rating) && rating >= 1 && rating <= 5;
+  });
   const reviewCount = productReviews.length;
-  const averageRating = reviewCount > 0 ? (productReviews.reduce((sum, r) => sum + (r.rating || 5), 0) / reviewCount).toFixed(1) : null;
+  const averageRating = reviewCount > 0 ? (productReviews.reduce((sum, review) => sum + Number(review.rating), 0) / reviewCount).toFixed(1) : null;
 
   const handleCardClick = () => {
     navigate(`/montres/${product.slug}`);

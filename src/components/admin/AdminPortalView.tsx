@@ -83,6 +83,32 @@ type AdminTab =
 
 type AnyRecord = Record<string, any>;
 
+type TrendPoint = { x: number; y: number };
+
+const smoothTrendPath = (points: TrendPoint[]) => {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+
+  const smoothing = 0.18;
+  return points.reduce((path, point, index) => {
+    if (index === 0) return `M ${point.x} ${point.y}`;
+
+    const previous = points[index - 1];
+    const beforePrevious = points[index - 2] || previous;
+    const next = points[index + 1] || point;
+    const controlOne = {
+      x: previous.x + (point.x - beforePrevious.x) * smoothing,
+      y: previous.y + (point.y - beforePrevious.y) * smoothing
+    };
+    const controlTwo = {
+      x: point.x - (next.x - previous.x) * smoothing,
+      y: point.y - (next.y - previous.y) * smoothing
+    };
+
+    return `${path} C ${controlOne.x} ${controlOne.y}, ${controlTwo.x} ${controlTwo.y}, ${point.x} ${point.y}`;
+  }, '');
+};
+
 const CONTACT_MESSAGE_STATUS_LABELS: Record<string, string> = {
   new: 'Nouveau',
   read: 'Lu',
@@ -110,6 +136,25 @@ const NAVIGATION: Array<{ id: AdminTab; label: string; icon: React.ElementType; 
   { id: 'coordinates', label: 'Coordonnées', icon: Settings2 },
   { id: 'pixels', label: 'Pixels', icon: BarChart3 }
 ];
+
+const ADMIN_ACTIVE_TAB_STORAGE_KEY = 'heritage-admin-active-tab';
+
+const getSavedAdminTab = (): AdminTab => {
+  try {
+    const savedTab = window.sessionStorage.getItem(ADMIN_ACTIVE_TAB_STORAGE_KEY);
+    return NAVIGATION.some((item) => item.id === savedTab) ? savedTab as AdminTab : 'dashboard';
+  } catch {
+    return 'dashboard';
+  }
+};
+
+const getSavedSidebarState = () => {
+  try {
+    return window.localStorage.getItem('heritage-admin-sidebar-collapsed') === 'true';
+  } catch {
+    return false;
+  }
+};
 
 const slugify = (text: string) =>
   String(text || '')
@@ -259,7 +304,7 @@ const RESOURCE_CONFIGS: Record<'reviews' | 'blogs' | 'faqs' | 'legal' | 'meta' |
       { name: 'is_featured_contact', label: 'Mettre en avant sur Contact', type: 'checkbox' },
       { name: 'merchant_response', label: 'Réponse de la boutique', type: 'textarea' }
     ],
-    summary: (item) => `${item.rating || 0}/5 · ${item.author_name || 'Client'} · ${item.status || 'pending'}`
+    summary: (item) => `${item.rating || '—'}/5 · ${item.status === 'approved' ? 'Approuvé' : item.status === 'rejected' ? 'Refusé' : 'En attente'}`
   },
   blogs: {
     key: 'blogs',
@@ -739,6 +784,35 @@ function ResourceManager({
     finally { setDraggedFaqId(null); }
   };
 
+  const groupedReviews = useMemo(() => {
+    if (config.key !== 'reviews') return [] as Array<{ key: string; label: string; items: AnyRecord[] }>;
+    const groups = new Map<string, { key: string; label: string; items: AnyRecord[] }>();
+    paginatedItems.forEach((item) => {
+      const product = item.product as { id?: string; name?: string; reference?: string } | null | undefined;
+      const key = item.product_id ? `product-${item.product_id}` : 'site';
+      const label = item.product_id
+        ? product?.name ? `${product.name}${product.reference ? ` · Réf. ${product.reference}` : ''}` : 'Produit associé indisponible'
+        : 'Avis sur le site';
+      const group = groups.get(key) || { key, label, items: [] };
+      group.items.push(item);
+      groups.set(key, group);
+    });
+    return [...groups.values()].sort((first, second) => first.label.localeCompare(second.label, 'fr-FR'));
+  }, [config.key, paginatedItems]);
+
+  const renderResourceRow = (item: AnyRecord) => (
+    <article key={item.id} draggable={config.key === 'faqs'} onDragStart={() => setDraggedFaqId(item.id)} onDragOver={(event) => { if (config.key === 'faqs') event.preventDefault(); }} onDrop={() => void reorderFaq(item.id)} className={`flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between ${config.key === 'faqs' ? 'cursor-grab' : ''}`}>
+      <div className="min-w-0">
+        <h2 className="truncate font-semibold text-[#002141]">{item.title || item.question || item.label || item.author_name || item.page_key || 'Élément sans titre'}</h2>
+        <p className="mt-1 text-sm text-[#3A3A3A]">{config.summary(item)}</p>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        <button type="button" onClick={() => startEdit(item)} className="admin-icon-button" aria-label="Modifier"><Pencil className="h-4 w-4" /></button>
+        <button type="button" onClick={() => remove(item)} className="admin-icon-button text-red-800 hover:border-red-300 hover:bg-red-50" aria-label="Supprimer"><Trash2 className="h-4 w-4" /></button>
+      </div>
+    </article>
+  );
+
   return (
     <>
       <PanelHeader
@@ -801,21 +875,20 @@ function ResourceManager({
         </form>
       )}
 
-      {filteredItems.length === 0 ? <EmptyState title={items.length ? 'Aucun résultat' : 'Aucun élément'} body={items.length ? 'Modifiez votre recherche.' : 'Créez le premier élément avec le bouton Ajouter.'} /> : (
-        <div className="divide-y divide-[#002141]/10 border border-[#002141]/15 bg-white">
-          {paginatedItems.map((item) => (
-            <article key={item.id} draggable={config.key === 'faqs'} onDragStart={() => setDraggedFaqId(item.id)} onDragOver={(event) => { if (config.key === 'faqs') event.preventDefault(); }} onDrop={() => void reorderFaq(item.id)} className={`flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between ${config.key === 'faqs' ? 'cursor-grab' : ''}`}>
-              <div className="min-w-0">
-                <h2 className="truncate font-semibold text-[#002141]">{item.title || item.question || item.label || item.author_name || item.page_key || 'Élément sans titre'}</h2>
-                <p className="mt-1 text-sm text-[#3A3A3A]">{config.summary(item)}</p>
+      {filteredItems.length === 0 ? <EmptyState title={items.length ? 'Aucun résultat' : 'Aucun élément'} body={items.length ? 'Modifiez votre recherche.' : 'Créez le premier élément avec le bouton Ajouter.'} /> : config.key === 'reviews' ? (
+        <div className="space-y-5">
+          {groupedReviews.map((group) => (
+            <section key={group.key} className="border border-[#002141]/15 bg-white" aria-labelledby={`review-group-${group.key}`}>
+              <div className="flex items-center justify-between gap-3 border-b border-[#002141]/10 bg-[#FAF9F7] px-5 py-3">
+                <h2 id={`review-group-${group.key}`} className="font-playfair text-lg font-semibold text-[#002141]">{group.label}</h2>
+                <span className="text-xs text-[#3A3A3A]">{group.items.length} avis</span>
               </div>
-              <div className="flex shrink-0 gap-2">
-                <button type="button" onClick={() => startEdit(item)} className="admin-icon-button" aria-label="Modifier"><Pencil className="h-4 w-4" /></button>
-                <button type="button" onClick={() => remove(item)} className="admin-icon-button text-red-800 hover:border-red-300 hover:bg-red-50" aria-label="Supprimer"><Trash2 className="h-4 w-4" /></button>
-              </div>
-            </article>
+              <div className="divide-y divide-[#002141]/10">{group.items.map(renderResourceRow)}</div>
+            </section>
           ))}
         </div>
+      ) : (
+        <div className="divide-y divide-[#002141]/10 border border-[#002141]/15 bg-white">{paginatedItems.map(renderResourceRow)}</div>
       )}
       {filteredItems.length > pageSize && <div className="mt-4 flex items-center justify-between"><button type="button" disabled={page === 1} onClick={() => setPage((current) => current - 1)} className="admin-secondary-button disabled:opacity-40">Précédent</button><span className="text-xs text-[#3A3A3A]">Page {page} / {totalPages}</span><button type="button" disabled={page === totalPages} onClick={() => setPage((current) => current + 1)} className="admin-secondary-button disabled:opacity-40">Suivant</button></div>}
     </>
@@ -824,9 +897,9 @@ function ResourceManager({
 
 export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) => {
   const [admin, setAdmin] = useState<AdminSession | null>(null);
-  const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<AdminTab>(getSavedAdminTab);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('heritage-admin-sidebar-collapsed') === 'true');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(getSavedSidebarState);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState('');
@@ -868,6 +941,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const [userOrderFilter, setUserOrderFilter] = useState('');
   const [userSort, setUserSort] = useState<'date_desc' | 'date_asc' | 'spent_desc' | 'orders_desc' | 'name_asc'>('date_desc');
   const [selectedUserModal, setSelectedUserModal] = useState<AnyRecord | null>(null);
+  const [userDetailLoading, setUserDetailLoading] = useState(false);
   const [orderSearch, setOrderSearch] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState('');
   const [orderDateFromFilter, setOrderDateFromFilter] = useState('');
@@ -964,7 +1038,11 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const toggleSidebar = () => {
     setSidebarCollapsed((current) => {
       const next = !current;
-      localStorage.setItem('heritage-admin-sidebar-collapsed', String(next));
+      try {
+        localStorage.setItem('heritage-admin-sidebar-collapsed', String(next));
+      } catch {
+        // Le menu reste utilisable lorsque le stockage du navigateur est indisponible.
+      }
       return next;
     });
   };
@@ -1028,12 +1106,17 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
         return;
       }
       setAdmin(session);
-      void loadTab('dashboard');
+      void loadTab(activeTab);
     });
   }, []);
 
   const selectTab = (tab: AdminTab) => {
     setActiveTab(tab);
+    try {
+      window.sessionStorage.setItem(ADMIN_ACTIVE_TAB_STORAGE_KEY, tab);
+    } catch {
+      // La navigation fonctionne normalement même sans stockage de session.
+    }
     setSidebarOpen(false);
     void loadTab(tab);
   };
@@ -1120,7 +1203,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
       const query = userSearch.trim().toLocaleLowerCase('fr-FR');
       const matchesSearch =
         !query ||
-        [user.full_name, user.email, user.phone, user.commune, user.delivery_address, user.shipping_address].some((value) =>
+        [user.full_name, user.email].some((value) =>
           String(value || '').toLocaleLowerCase('fr-FR').includes(query)
         );
 
@@ -1303,6 +1386,27 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   const renderDashboard = () => {
     const chart = dashboard?.chart || [];
     const maxRevenue = Math.max(...chart.map((point: AnyRecord) => Number(point.revenueXOF || 0)), 1);
+    const maxVisits = Math.max(...chart.map((point: AnyRecord) => Number(point.visits || 0)), 1);
+    const hasChartData = chart.length > 0 && chart.some((point: AnyRecord) => Number(point.revenueXOF || 0) > 0 || Number(point.orders || 0) > 0 || Number(point.visits || 0) > 0);
+    const chartWidth = 1000;
+    const chartHeight = 260;
+    const chartTop = 18;
+    const chartBottom = 38;
+    const chartInset = 28;
+    const chartPlotHeight = chartHeight - chartTop - chartBottom;
+    const chartPlotWidth = chartWidth - chartInset * 2;
+    const chartCoordinates = chart.map((point: AnyRecord, index: number) => {
+      const x = chart.length > 1 ? chartInset + (index / (chart.length - 1)) * chartPlotWidth : chartWidth / 2;
+      return {
+        point,
+        x,
+        revenueY: chartTop + chartPlotHeight - (Number(point.revenueXOF || 0) / maxRevenue) * chartPlotHeight,
+        visitsY: chartTop + chartPlotHeight - (Number(point.visits || 0) / maxVisits) * chartPlotHeight
+      };
+    });
+    const revenueTrendPath = smoothTrendPath(chartCoordinates.map(({ x, revenueY }) => ({ x, y: revenueY })));
+    const visitsTrendPath = smoothTrendPath(chartCoordinates.map(({ x, visitsY }) => ({ x, y: visitsY })));
+    const chartLabelStep = Math.max(1, Math.ceil(chart.length / 6));
     const statuses = dashboardTotals.statuses || {};
     const topPages = dashboard?.topPages || [];
     const topProducts = dashboard?.topProducts || [];
@@ -1399,21 +1503,21 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
         </section>
       )}
 
-      {/* Graphique et bloc Contenu à traiter */}
-      <div className="mt-7 grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+      {/* Tendance d’activité et éléments à traiter */}
+      <div className="mt-7 space-y-6">
         <section className="border border-[#002141]/12 bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between border-b border-[#002141]/10 pb-4">
+          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[#002141]/10 pb-4">
             <div>
               <h2 className="font-playfair text-xl font-semibold text-[#002141]">Évolution de l’activité</h2>
-              <p className="text-xs text-[#3A3A3A]">Chiffre d’affaires et commandes quotidiennes</p>
+              <p className="text-xs text-[#3A3A3A]">Tendances quotidiennes du chiffre d’affaires et des visites</p>
             </div>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 bg-[#AC854B]" /> CA (FCFA)</span>
-              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 bg-[#002141]" /> Visites</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[#3A3A3A]">
+              <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 rounded-full bg-[#AC854B]" /> CA (FCFA)</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 rounded-full bg-[#002141]" /> Visites</span>
             </div>
           </div>
 
-          {chart.length === 0 || chart.every((p: AnyRecord) => !p.revenueXOF && !p.orders && !p.visits) ? (
+          {!hasChartData ? (
             <div className="my-12 flex flex-col items-center justify-center text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#002141]/5 text-[#002141]">
                 <BarChart3 className="h-6 w-6" />
@@ -1424,40 +1528,56 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
               </p>
             </div>
           ) : (
-            <div className="mt-6 flex h-52 items-end gap-2 overflow-x-auto pb-2">
-              {chart.map((point: AnyRecord) => {
-                const revHeight = maxRevenue > 0 ? Math.max(6, Math.round((Number(point.revenueXOF || 0) / maxRevenue) * 100)) : 0;
-                return (
-                  <div key={point.date} className="group flex min-w-8 flex-1 flex-col items-center justify-end gap-1.5">
-                    <div className="hidden rounded bg-[#002141] px-2 py-1 text-center text-[10px] text-white shadow group-hover:block">
-                      <p className="font-semibold">{formatXOF(point.revenueXOF)}</p>
-                      <p className="text-[9px] text-[#D6BB8F]">{point.orders} cmd. · {point.visits} visites</p>
-                    </div>
-                    <div className="flex w-full items-end gap-0.5" style={{ height: '140px' }}>
-                      <div
-                        className="w-full bg-[#AC854B] transition-all hover:bg-[#8F6A33]"
-                        style={{ height: `${revHeight}%` }}
-                        title={`${formatXOF(point.revenueXOF)} - ${point.orders} commande(s)`}
-                      />
-                    </div>
-                    <span className="text-[9px] text-[#3A3A3A]">{String(point.date).slice(5)}</span>
-                  </div>
-                );
-              })}
+            <div className="mt-6 overflow-x-auto">
+              <div className="min-w-[620px]">
+                <svg
+                  className="h-64 w-full overflow-visible"
+                  viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                  preserveAspectRatio="none"
+                  role="img"
+                  aria-label="Courbes de tendance du chiffre d’affaires et des visites sur la période sélectionnée"
+                >
+                  <defs>
+                    <linearGradient id="admin-revenue-trend-fill" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor="#AC854B" stopOpacity="0.22" />
+                      <stop offset="100%" stopColor="#AC854B" stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+                  {[0, 1, 2, 3].map((index) => {
+                    const y = chartTop + (chartPlotHeight / 3) * index;
+                    return <line key={index} x1={chartInset} x2={chartWidth - chartInset} y1={y} y2={y} stroke="#002141" strokeOpacity="0.1" strokeWidth="1" />;
+                  })}
+                  <path d={`${revenueTrendPath} L ${chartCoordinates[chartCoordinates.length - 1]?.x || chartWidth - chartInset} ${chartTop + chartPlotHeight} L ${chartCoordinates[0]?.x || chartInset} ${chartTop + chartPlotHeight} Z`} fill="url(#admin-revenue-trend-fill)" />
+                  <path d={revenueTrendPath} fill="none" stroke="#AC854B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                  <path d={visitsTrendPath} fill="none" stroke="#002141" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                  {chartCoordinates.map(({ point, x, revenueY, visitsY }, index) => {
+                    const showLabel = index === 0 || index === chartCoordinates.length - 1 || index % chartLabelStep === 0;
+                    return (
+                      <g key={point.date}>
+                        <title>{`${String(point.date)} — ${formatXOF(point.revenueXOF)} · ${point.orders || 0} commande(s) · ${point.visits || 0} visite(s)`}</title>
+                        <circle cx={x} cy={revenueY} r="3.5" fill="#FAF9F7" stroke="#AC854B" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                        <circle cx={x} cy={visitsY} r="3" fill="#FAF9F7" stroke="#002141" strokeWidth="1.75" vectorEffect="non-scaling-stroke" />
+                        {showLabel && <text x={x} y={chartHeight - 10} textAnchor="middle" fill="#3A3A3A" fontSize="11">{String(point.date).slice(5)}</text>}
+                      </g>
+                    );
+                  })}
+                </svg>
+              </div>
+              <p className="mt-2 text-[11px] text-[#3A3A3A]">Chaque courbe est normalisée à sa propre échelle afin de rendre les variations lisibles.</p>
             </div>
           )}
         </section>
 
-        {/* Bloc "Contenu à traiter" */}
+        {/* Bloc "Contenu à traiter", placé après la tendance pleine largeur. */}
         <section className="border border-[#002141]/12 bg-[#002141] p-6 text-[#FAF9F7] shadow-sm">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#D6BB8F]">Contenu à traiter</p>
           <p className="mt-1 text-xs text-[#FAF9F7]/70">Actions requises en attente dans le portail</p>
 
-          <div className="mt-6 space-y-4">
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <button
               type="button"
               onClick={() => selectTab('reviews')}
-              className="group flex w-full items-center justify-between rounded border border-[#D6BB8F]/20 bg-white/5 p-4 text-left transition hover:border-[#D6BB8F] hover:bg-white/10"
+              className="group flex min-h-28 w-full items-center justify-between rounded border border-[#D6BB8F]/20 bg-white/5 p-4 text-left transition-colors duration-200 hover:border-[#D6BB8F] hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#D6BB8F]"
             >
               <div>
                 <strong className="font-playfair text-3xl font-semibold text-[#D6BB8F]">
@@ -1471,7 +1591,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
             <button
               type="button"
               onClick={() => selectTab('messages')}
-              className="group flex w-full items-center justify-between rounded border border-[#D6BB8F]/20 bg-white/5 p-4 text-left transition hover:border-[#D6BB8F] hover:bg-white/10"
+              className="group flex min-h-28 w-full items-center justify-between rounded border border-[#D6BB8F]/20 bg-white/5 p-4 text-left transition-colors duration-200 hover:border-[#D6BB8F] hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#D6BB8F]"
             >
               <div>
                 <strong className="font-playfair text-3xl font-semibold text-[#D6BB8F]">
@@ -1485,7 +1605,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
             <button
               type="button"
               onClick={() => selectTab('users')}
-              className="group flex w-full items-center justify-between rounded border border-[#D6BB8F]/20 bg-white/5 p-4 text-left transition hover:border-[#D6BB8F] hover:bg-white/10"
+              className="group flex min-h-28 w-full items-center justify-between rounded border border-[#D6BB8F]/20 bg-white/5 p-4 text-left transition-colors duration-200 hover:border-[#D6BB8F] hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#D6BB8F]"
             >
               <div>
                 <strong className="font-playfair text-3xl font-semibold text-[#D6BB8F]">
@@ -1499,7 +1619,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
             <button
               type="button"
               onClick={() => selectTab('products')}
-              className="group flex w-full items-center justify-between rounded border border-[#D6BB8F]/20 bg-white/5 p-4 text-left transition hover:border-[#D6BB8F] hover:bg-white/10"
+              className="group flex min-h-28 w-full items-center justify-between rounded border border-[#D6BB8F]/20 bg-white/5 p-4 text-left transition-colors duration-200 hover:border-[#D6BB8F] hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#D6BB8F]"
             >
               <div>
                 <strong className="font-playfair text-3xl font-semibold text-[#D6BB8F]">
@@ -1976,9 +2096,9 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                     </p>
                   </div>
                 </div>
-              </div>
+                </div>
 
-              {/* Vérification du prix promo */}
+                {/* Vérification du prix promo */}
               {currentSale !== null && currentSale > 0 && currentSale >= currentRegular && (
                 <div className="flex items-center gap-2 border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
                   <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700" />
@@ -3820,6 +3940,34 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
     const aggregateRevenue = safeUsers.reduce((sum, u) => sum + Number(u.total_spent_xof || 0), 0);
     const aggregateOrdersCount = safeUsers.reduce((sum, u) => sum + Number(u.order_count || 0), 0);
 
+    const openUserDetail = async (summary: AnyRecord) => {
+      setSelectedUserModal(summary);
+      setUserDetailLoading(true);
+      try {
+        const detail = await adminRequest<AnyRecord>(`/users/${summary.id}`);
+        setSelectedUserModal(detail);
+      } catch (error) {
+        setSelectedUserModal(null);
+        notify(error instanceof Error ? error.message : 'La fiche client ne peut pas être chargée.');
+      } finally {
+        setUserDetailLoading(false);
+      }
+    };
+
+    const openCustomerOrder = async (order: AnyRecord) => {
+      setSelectedUserModal(null);
+      setOrderDetailLoading(true);
+      selectTab('orders');
+      try {
+        const detail = await adminRequest<AnyRecord>(`/orders/${order.id}`);
+        setSelectedOrder(detail);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'Le détail de la commande ne peut pas être chargé.');
+      } finally {
+        setOrderDetailLoading(false);
+      }
+    };
+
     const toggleUserStatus = async (userToUpdate: AnyRecord) => {
       const nextStatus = userToUpdate.is_active === false;
       const actionText = nextStatus ? 'réactiver' : 'bloquer';
@@ -3828,7 +3976,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
       }
 
       try {
-        const updated = await adminRequest<AnyRecord>(`/users/${userToUpdate.id}`, {
+        await adminRequest<AnyRecord>(`/users/${userToUpdate.id}`, {
           method: 'PATCH',
           body: { is_active: nextStatus }
         });
@@ -3909,7 +4057,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                   type="text"
                   value={userSearch}
                   onChange={(e) => setUserSearch(e.target.value)}
-                  placeholder="Nom, email, téléphone, adresse…"
+                  placeholder="Nom ou adresse e-mail…"
                   className="admin-input pl-9"
                 />
               </div>
@@ -3974,9 +4122,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
             <table className="w-full text-left text-xs">
               <thead className="border-b border-[#002141]/15 bg-[#F5F3EF] text-[11px] font-bold uppercase tracking-wider text-[#002141]">
                 <tr>
-                  <th className="p-3.5">Client & Contact</th>
+                  <th className="p-3.5">Client</th>
                   <th className="p-3.5">Statut</th>
-                  <th className="p-3.5">Adresse / Commune</th>
                   <th className="p-3.5">Commandes & Dépenses</th>
                   <th className="p-3.5">Inscription</th>
                   <th className="p-3.5 text-right">Actions</th>
@@ -4004,11 +4151,6 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                             <p className="text-[11px] text-[#3A3A3A] flex items-center gap-1">
                               <Mail className="h-3 w-3 inline text-gray-500" /> {client.email}
                             </p>
-                            {client.phone && (
-                              <p className="text-[11px] text-[#3A3A3A] flex items-center gap-1">
-                                <Phone className="h-3 w-3 inline text-gray-500" /> {client.phone}
-                              </p>
-                            )}
                           </div>
                         </div>
                       </td>
@@ -4023,13 +4165,6 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                             <UserCheck className="h-3 w-3" /> Actif
                           </span>
                         )}
-                      </td>
-
-                      <td className="p-3.5 max-w-xs truncate">
-                        <p className="font-semibold text-[#002141]">{client.commune || 'Abidjan'}</p>
-                        <p className="text-[11px] text-[#3A3A3A] truncate" title={client.delivery_address || client.shipping_address}>
-                          {client.delivery_address || client.shipping_address || 'Aucune adresse renseignée'}
-                        </p>
                       </td>
 
                       <td className="p-3.5 whitespace-nowrap">
@@ -4049,7 +4184,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                         <div className="flex justify-end items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => setSelectedUserModal(client)}
+                            onClick={() => void openUserDetail(client)}
                             className="admin-secondary-button py-1 px-2.5 text-xs flex items-center gap-1"
                             title="Voir la fiche client détaillée"
                           >
@@ -4132,6 +4267,12 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
 
               {/* Modal Body */}
               <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+                {userDetailLoading ? (
+                  <div className="flex min-h-56 items-center justify-center gap-3 text-sm text-[#002141]">
+                    <LoaderCircle className="h-5 w-5 animate-spin text-[#AC854B]" /> Chargement de la fiche client…
+                  </div>
+                ) : (
+                  <>
                 {/* Account Action Banner */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 border border-[#002141]/15 bg-[#F5F3EF]">
                   <div>
@@ -4199,18 +4340,21 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                     <h3 className="text-xs font-bold uppercase tracking-wider text-[#002141] mb-3 flex items-center gap-1.5 border-b border-[#002141]/10 pb-2">
                       <MapPin className="h-4 w-4 text-[#AC854B]" /> Adresses Enregistrées
                     </h3>
-                    <dl className="space-y-2 text-xs">
-                      <div>
-                        <dt className="text-gray-500 font-semibold">Commune / Ville :</dt>
-                        <dd className="text-[#002141] font-semibold">{selectedUserModal.commune || 'Abidjan (Défaut)'}</dd>
+                    {Array.isArray(selectedUserModal.addresses) && selectedUserModal.addresses.length > 0 ? (
+                      <div className="space-y-3 text-xs">
+                        {selectedUserModal.addresses.map((address: AnyRecord) => (
+                          <div key={address.id} className="border-b border-[#002141]/10 pb-3 last:border-0 last:pb-0">
+                            <p className="font-semibold text-[#002141]">
+                              {address.label || 'Adresse'} {address.is_default ? <span className="text-[10px] text-[#AC854B]">· Par défaut</span> : null}
+                            </p>
+                            <p className="mt-0.5 leading-relaxed text-[#3A3A3A]">{address.address_line}</p>
+                            <p className="mt-0.5 text-[#3A3A3A]">{[address.commune, address.phone].filter(Boolean).join(' · ')}</p>
+                          </div>
+                        ))}
                       </div>
-                      <div>
-                        <dt className="text-gray-500 font-semibold">Adresse de livraison :</dt>
-                        <dd className="text-[#002141] leading-relaxed">
-                          {selectedUserModal.delivery_address || selectedUserModal.shipping_address || 'Aucune adresse enregistrée.'}
-                        </dd>
-                      </div>
-                    </dl>
+                    ) : (
+                      <p className="text-xs leading-relaxed text-[#3A3A3A]">Aucune adresse enregistrée.</p>
+                    )}
                   </div>
                 </div>
 
@@ -4281,11 +4425,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                               <td className="p-2.5 text-right">
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    setSelectedUserModal(null);
-                                    selectTab('orders');
-                                    setSelectedOrder(ord);
-                                  }}
+                                  onClick={() => void openCustomerOrder(ord)}
                                   className="text-[11px] font-bold text-[#AC854B] hover:underline flex items-center gap-1 justify-end ml-auto"
                                 >
                                   Voir détail <ExternalLink className="h-3 w-3 inline" />
@@ -4298,6 +4438,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
                     </div>
                   )}
                 </div>
+                  </>
+                )}
               </div>
 
               {/* Modal Footer */}
@@ -5334,13 +5476,13 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   return (
     <div className="admin-portal min-h-screen bg-[#F5F3EF] text-[#002141]">
       {sidebarOpen && <button type="button" className="fixed inset-0 z-40 bg-[#002141]/60 lg:hidden" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu" />}
-      <aside className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-[#002141] text-[#FAF9F7] shadow-2xl transition-[width,transform] duration-200 ease-out lg:translate-x-0 ${sidebarCollapsed ? 'lg:w-16' : 'lg:w-64'} ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className={`flex items-center justify-between border-b border-[#FAF9F7]/10 p-4 transition-all duration-200 ${sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''}`}>
+      <aside className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-[#002141] text-[#FAF9F7] shadow-2xl transition-[width,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none lg:translate-x-0 ${sidebarCollapsed ? 'lg:w-20' : 'lg:w-64'} ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className={`flex min-h-20 items-center border-b border-[#FAF9F7]/10 px-4 py-3 ${sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''}`}>
           <button type="button" onClick={() => selectTab('dashboard')} className="flex min-w-0 items-center gap-3 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D6BB8F] group" aria-label="Tableau de bord administrateur">
-            <div className="relative flex h-8 w-8 shrink-0 items-center justify-center">
+            <div className="relative flex h-9 w-9 shrink-0 items-center justify-center">
               <img src="/assets/favicon.svg" alt="Monogramme HERITAGE" className="h-full w-full object-contain" />
             </div>
-            <div className={`flex flex-col overflow-hidden whitespace-nowrap transition-all duration-200 ease-out text-left ${sidebarCollapsed ? 'lg:w-0 lg:opacity-0' : 'lg:w-[130px] lg:opacity-100'}`}>
+            <div className={`flex flex-col overflow-hidden whitespace-nowrap text-left transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${sidebarCollapsed ? 'lg:max-w-0 lg:-translate-x-1 lg:opacity-0' : 'lg:max-w-36 lg:translate-x-0 lg:opacity-100'}`}>
               <span className="text-[15px] font-bold tracking-widest text-[#FAF9F7] group-hover:text-[#D6BB8F] transition-colors">
                 HERITAGE
               </span>
@@ -5349,25 +5491,24 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
               </span>
             </div>
           </button>
-          <button type="button" onClick={toggleSidebar} className="admin-sidebar-icon hidden lg:inline-flex" aria-label={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'} aria-expanded={!sidebarCollapsed} title={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'}><PanelLeftOpen className={`h-5 w-5 transition-transform duration-200 ${sidebarCollapsed ? 'rotate-180' : ''}`} /></button>
-          <button type="button" onClick={() => setSidebarOpen(false)} className="admin-sidebar-icon lg:hidden" aria-label="Fermer le menu"><X className="h-5 w-5" /></button>
+          <button type="button" onClick={() => setSidebarOpen(false)} className="admin-sidebar-icon ml-auto lg:hidden" aria-label="Fermer le menu"><X className="h-5 w-5" /></button>
         </div>
-        <nav className="flex-1 overflow-y-auto p-2" aria-label="Navigation administration">
+        <nav className={`flex-1 overflow-y-auto p-2 transition-[padding] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${sidebarCollapsed ? 'lg:px-2' : ''}`} aria-label="Navigation administration">
           {NAVIGATION.map((item, index) => {
             const Icon = item.icon;
             const previous = NAVIGATION[index - 1];
             return (
               <React.Fragment key={item.id}>
                 {item.section && (
-                  <div className={`overflow-hidden transition-all duration-200 ease-out ${sidebarCollapsed ? 'lg:h-0 lg:opacity-0' : 'lg:h-auto lg:opacity-100'}`}>
+                  <div className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${sidebarCollapsed ? 'lg:max-h-0 lg:opacity-0' : 'lg:max-h-16 lg:opacity-100'}`}>
                     <p className={`px-2 pb-1 text-[9px] font-bold uppercase tracking-[0.16em] text-[#D6BB8F]/80 whitespace-nowrap ${previous ? 'pt-5' : 'pt-2'}`}>
                       {item.section}
                     </p>
                   </div>
                 )}
-                <button type="button" onClick={() => selectTab(item.id)} title={sidebarCollapsed ? item.label : undefined} className={`flex min-h-10 w-full items-center gap-3 px-3 text-left text-[13px] font-semibold transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#D6BB8F] rounded-md ${sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''} ${activeTab === item.id ? 'bg-[#AC854B] text-[#002141] shadow-sm' : 'text-[#FAF9F7]/82 hover:bg-[#FAF9F7]/10 hover:text-[#FAF9F7]'}`}>
+                <button type="button" onClick={() => selectTab(item.id)} title={sidebarCollapsed ? item.label : undefined} className={`flex min-h-10 w-full items-center gap-3 rounded-md px-3 text-left text-[13px] font-semibold transition-[background-color,color,padding] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#D6BB8F] ${sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''} ${activeTab === item.id ? 'bg-[#AC854B] text-[#002141] shadow-sm' : 'text-[#FAF9F7]/82 hover:bg-[#FAF9F7]/10 hover:text-[#FAF9F7]'}`}>
                   <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
-                  <span className={`overflow-hidden whitespace-nowrap transition-all duration-200 ease-out ${sidebarCollapsed ? 'lg:w-0 lg:opacity-0' : 'lg:w-[160px] lg:opacity-100'}`}>
+                  <span className={`overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${sidebarCollapsed ? 'lg:max-w-0 lg:-translate-x-1 lg:opacity-0' : 'lg:max-w-40 lg:translate-x-0 lg:opacity-100'}`}>
                     {item.label}
                   </span>
                 </button>
@@ -5375,20 +5516,41 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
             );
           })}
         </nav>
-        <div className={`border-t border-[#FAF9F7]/10 p-3 flex flex-col transition-all duration-200 ${sidebarCollapsed ? 'lg:px-2 lg:items-center' : ''}`}>
-          <div className={`overflow-hidden whitespace-nowrap transition-all duration-200 ease-out ${sidebarCollapsed ? 'lg:w-0 lg:h-0 lg:opacity-0' : 'lg:w-[200px] lg:h-auto lg:opacity-100'}`}>
+        <div className={`flex flex-col border-t border-[#FAF9F7]/10 p-3 transition-[padding] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${sidebarCollapsed ? 'lg:items-center lg:px-2' : ''}`}>
+          <div className={`overflow-hidden whitespace-nowrap transition-[max-height,max-width,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${sidebarCollapsed ? 'lg:max-h-0 lg:max-w-0 lg:opacity-0' : 'lg:max-h-16 lg:max-w-52 lg:opacity-100'}`}>
             <p className="truncate text-[13px] font-semibold">{admin.full_name || 'Administrateur'}</p>
             <p className="mt-1 truncate text-xs text-[#FAF9F7]/60">{admin.email}</p>
           </div>
-          <button type="button" onClick={() => void logout()} title={sidebarCollapsed ? 'Déconnexion' : undefined} className={`flex min-h-10 w-full items-center gap-3 text-xs font-bold uppercase tracking-[0.14em] text-[#D6BB8F] transition-colors hover:text-[#FAF9F7] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D6BB8F] rounded-md ${sidebarCollapsed ? 'lg:justify-center lg:mt-0 lg:px-0' : 'mt-3 px-3 hover:bg-[#FAF9F7]/10'}`}>
+          <button type="button" onClick={() => void logout()} title={sidebarCollapsed ? 'Déconnexion' : undefined} className={`flex min-h-10 w-full items-center gap-3 rounded-md text-xs font-bold uppercase tracking-[0.14em] text-[#D6BB8F] transition-colors hover:text-[#FAF9F7] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D6BB8F] ${sidebarCollapsed ? 'lg:mt-0 lg:justify-center lg:px-0' : 'mt-3 px-3 hover:bg-[#FAF9F7]/10'}`}>
             <LogOut className="h-[18px] w-[18px] shrink-0" />
-            <span className={`overflow-hidden whitespace-nowrap transition-all duration-200 ease-out ${sidebarCollapsed ? 'lg:w-0 lg:opacity-0' : 'lg:w-[160px] lg:opacity-100'}`}>
+            <span className={`overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${sidebarCollapsed ? 'lg:max-w-0 lg:-translate-x-1 lg:opacity-0' : 'lg:max-w-40 lg:translate-x-0 lg:opacity-100'}`}>
               Déconnexion
             </span>
           </button>
         </div>
       </aside>
-      <div className={`transition-[padding] duration-200 ease-out ${sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-64'}`}><header className="sticky top-0 z-30 flex min-h-16 items-center justify-between border-b border-[#002141]/10 bg-[#F5F3EF]/95 px-4 py-2 backdrop-blur sm:px-6"><div className="flex items-center gap-3"><button type="button" onClick={() => setSidebarOpen(true)} className="admin-icon-button lg:hidden" aria-label="Ouvrir le menu"><Menu className="h-5 w-5" /></button><button type="button" onClick={toggleSidebar} className="admin-icon-button hidden lg:inline-flex" aria-label={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'} title={sidebarCollapsed ? 'Déplier le menu' : 'Plier le menu'}><PanelLeftOpen className={`h-5 w-5 transition-transform duration-200 ${sidebarCollapsed ? 'rotate-180' : ''}`} /></button><div><p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#AC854B]">Portail privé</p><p className="text-[13px] font-semibold text-[#002141]">{NAVIGATION.find((item) => item.id === activeTab)?.label}</p></div></div><button type="button" onClick={() => navigate('/')} className="admin-secondary-button hidden sm:inline-flex"><PanelLeftClose className="h-4 w-4" /> Voir la boutique</button></header>
+      <div className={`transition-[padding] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-64'}`}>
+        <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between border-b border-[#002141]/10 bg-[#F5F3EF]/95 px-4 py-2 backdrop-blur sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <button type="button" onClick={() => setSidebarOpen(true)} className="admin-icon-button lg:hidden" aria-label="Ouvrir le menu"><Menu className="h-5 w-5" /></button>
+            <button type="button" onClick={toggleSidebar} className="admin-icon-button hidden lg:inline-flex" aria-label={sidebarCollapsed ? 'Déplier le menu' : 'Replier le menu'} aria-expanded={!sidebarCollapsed} title={sidebarCollapsed ? 'Déplier le menu' : 'Replier le menu'}>
+              {sidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+            </button>
+            <div className="min-w-0">
+              <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#AC854B]">Portail privé</p>
+              <p className="truncate text-[13px] font-semibold text-[#002141]">{NAVIGATION.find((item) => item.id === activeTab)?.label}</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={() => void loadTab(activeTab)} className="admin-icon-button sm:hidden" disabled={loading} aria-label="Actualiser les données de cette interface" title="Actualiser">
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+            <button type="button" onClick={() => void loadTab(activeTab)} className="admin-secondary-button hidden sm:inline-flex disabled:cursor-not-allowed disabled:opacity-50" disabled={loading}>
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Actualiser
+            </button>
+            <button type="button" onClick={() => navigate('/')} className="admin-secondary-button hidden md:inline-flex"><PanelLeftClose className="h-4 w-4" /> Voir la boutique</button>
+          </div>
+        </header>
         <main className="px-4 py-5 sm:px-6 lg:px-8">{loading ? <div className="flex min-h-80 items-center justify-center text-sm text-[#3A3A3A]"><LoaderCircle className="mr-3 h-5 w-5 animate-spin text-[#AC854B]" /> Chargement des données sécurisées…</div> : loadError ? <DataUnavailable message={loadError} /> : content}</main>
       </div>
       {notice && <div role="status" className="fixed bottom-5 right-5 z-[60] max-w-sm border border-[#D6BB8F] bg-[#002141] px-4 py-3 text-sm text-[#FAF9F7] shadow-xl"><CheckCircle2 className="mr-2 inline h-4 w-4 text-[#D6BB8F]" />{notice}</div>}

@@ -61,6 +61,7 @@ export interface PublicReview {
   body: string;
   merchant_response: string | null;
   created_at: string;
+  status: 'approved';
   is_featured_home?: boolean;
   is_featured_contact?: boolean;
   product: { name: string; slug: string } | null;

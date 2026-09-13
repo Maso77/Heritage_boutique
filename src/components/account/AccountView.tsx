@@ -5,6 +5,7 @@ import {
   signUpWithSupabase,
   signInWithSupabase,
   signOutSupabase,
+  resendSignupConfirmation,
   fetchUserProfile,
   fetchCurrentSessionProfile,
   fetchUserOrdersFromSupabase
@@ -71,6 +72,7 @@ export const AccountView: React.FC<AccountViewProps> = ({ navigate }) => {
 
   // States
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResendingConfirmation, setIsResendingConfirmation] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -136,7 +138,7 @@ export const AccountView: React.FC<AccountViewProps> = ({ navigate }) => {
         const rawPhone = phoneNumber.trim().replace(/[^0-9]/g, '');
         const fullWhatsApp = rawPhone ? `${phonePrefix} ${rawPhone}` : undefined;
 
-        const { user } = await signUpWithSupabase({
+        const { user, session } = await signUpWithSupabase({
           email: cleanEmail,
           password,
           fullName: fullName.trim(),
@@ -145,19 +147,17 @@ export const AccountView: React.FC<AccountViewProps> = ({ navigate }) => {
           deliveryAddress: deliveryAddress.trim()
         });
 
-        loginUser(cleanEmail);
-        setSuccessMessage('Votre compte privilégié a été créé avec succès. Bienvenue chez Maison HERITAGE.');
+        if (!session || !user) {
+          setAuthMode('login');
+          setSuccessMessage('Votre compte a été créé. Confirmez votre adresse e-mail puis connectez-vous pour accéder à votre espace client.');
+          return;
+        }
 
-        // Initialiser profil local
-        setUserProfile({
-          id: user?.id || 'usr-' + Date.now(),
-          email: cleanEmail,
-          phone: fullWhatsApp,
-          fullName: fullName.trim(),
-          commune,
-          deliveryAddress: deliveryAddress.trim(),
-          role: cleanEmail.includes('heritageci15') ? 'admin' : 'customer'
-        });
+        const profile = await fetchUserProfile(user.id);
+        if (!profile) throw new Error("Le profil client n'est pas encore disponible. Veuillez vous reconnecter dans quelques instants.");
+        loginUser(profile.email || cleanEmail);
+        setUserProfile(profile);
+        setSuccessMessage('Votre compte client a été créé avec succès.');
       } else {
         // Connexion avec Email uniquement
         const { user } = await signInWithSupabase({
@@ -165,13 +165,13 @@ export const AccountView: React.FC<AccountViewProps> = ({ navigate }) => {
           password
         });
 
-        loginUser(cleanEmail);
-        setSuccessMessage('Connexion réussie. Bienvenue dans votre Espace Privilège.');
-
         if (user) {
           const prof = await fetchUserProfile(user.id);
-          if (prof) setUserProfile(prof);
+          if (!prof) throw new Error("Ce compte client n'est pas disponible.");
+          loginUser(prof.email || cleanEmail);
+          setUserProfile(prof);
         }
+        setSuccessMessage('Connexion réussie. Bienvenue dans votre espace client.');
       }
     } catch (err: any) {
       setErrorMessage(err.message || "Une erreur est survenue lors de l'authentification.");
@@ -186,6 +186,20 @@ export const AccountView: React.FC<AccountViewProps> = ({ navigate }) => {
     setUserProfile(null);
     setSuccessMessage('Vous êtes maintenant déconnecté.');
     setTimeout(() => setSuccessMessage(null), 3000);
+  };
+
+  const handleResendConfirmation = async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setIsResendingConfirmation(true);
+    try {
+      await resendSignupConfirmation(emailInput);
+      setSuccessMessage('Un nouvel e-mail de confirmation vient d’être envoyé. Ouvrez-le avant de vous connecter.');
+    } catch (error: any) {
+      setErrorMessage(error?.message || "L’e-mail de confirmation n’a pas pu être renvoyé.");
+    } finally {
+      setIsResendingConfirmation(false);
+    }
   };
 
   // L'accès administrateur dépend uniquement du rôle validé côté Supabase.
@@ -223,9 +237,19 @@ export const AccountView: React.FC<AccountViewProps> = ({ navigate }) => {
 
         {/* Global Notifications */}
         {errorMessage && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-800 text-xs flex items-center gap-3">
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-800 text-xs flex flex-wrap items-center gap-3">
             <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-600" />
             <span>{errorMessage}</span>
+            {errorMessage.includes('confirmée') && (
+              <button
+                type="button"
+                onClick={() => void handleResendConfirmation()}
+                disabled={isResendingConfirmation}
+                className="ml-auto border border-red-300 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-red-800 transition-colors hover:bg-red-100 disabled:opacity-60"
+              >
+                {isResendingConfirmation ? 'Envoi…' : 'Renvoyer le lien'}
+              </button>
+            )}
           </div>
         )}
 

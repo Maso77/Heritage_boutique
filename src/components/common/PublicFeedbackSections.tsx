@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { usePublicContent } from '../../lib/public-content';
-import { Star, ChevronDown, CheckCircle2 } from 'lucide-react';
+import { Star, ChevronDown } from 'lucide-react';
 
 interface PublicFeedbackProps {
   placement: 'home' | 'catalog' | 'contact';
@@ -10,38 +10,27 @@ export const PublicFeedbackSections: React.FC<PublicFeedbackProps> = ({ placemen
   const { faqs, reviews } = usePublicContent();
   const [openFaqId, setOpenFaqId] = useState<string | null>(null);
 
-  // Filter FAQs by placement
-  const visibleFaqs = faqs.filter((faq) => {
-    const placements = Array.isArray(faq.placements) ? faq.placements : [];
-    if (placement === 'home') {
-      return placements.includes('home') || faq.placement === 'home' || faq.placement === 'all';
-    }
-    if (placement === 'catalog') {
-      return (
-        placements.includes('catalog') ||
-        placements.includes('boutique-catalogue') ||
-        faq.placement === 'catalog' ||
-        faq.placement === 'all'
-      );
-    }
-    if (placement === 'contact') {
-      return placements.includes('contact') || faq.placement === 'contact' || faq.placement === 'all';
-    }
-    return false;
+  const visibleFaqs = faqs.filter((faq) => Array.isArray(faq.placements) && faq.placements.includes(placement));
+
+  // The API only returns approved rows. Check it again here and reject malformed
+  // records rather than inventing a default author, body or rating.
+  const approvedReviews = reviews.filter((review) => {
+    const rating = Number(review?.rating);
+    return review?.status === 'approved'
+      && Boolean(review.author_name?.trim())
+      && Boolean(review.body?.trim())
+      && Number.isInteger(rating)
+      && rating >= 1
+      && rating <= 5;
   });
 
-  // Filter approved Reviews only
-  const approvedReviews = reviews.filter((r) => r && String((r as any).status || 'approved') === 'approved');
-
-  let visibleReviews = approvedReviews;
+  let visibleReviews: typeof approvedReviews = [];
   if (placement === 'home') {
     const featured = approvedReviews.filter((r) => r.is_featured_home);
     visibleReviews = featured.length > 0 ? featured.slice(0, 6) : approvedReviews.slice(0, 6);
   } else if (placement === 'contact') {
     const featured = approvedReviews.filter((r) => r.is_featured_contact);
     visibleReviews = featured.length > 0 ? featured.slice(0, 6) : approvedReviews.slice(0, 6);
-  } else {
-    visibleReviews = approvedReviews.slice(0, 6);
   }
 
   const hasFaqs = visibleFaqs.length > 0;
@@ -58,13 +47,13 @@ export const PublicFeedbackSections: React.FC<PublicFeedbackProps> = ({ placemen
           <section aria-labelledby={`reviews-heading-${placement}`}>
             <div className="text-center max-w-2xl mx-auto mb-12">
               <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-[#AC854B] block mb-2">
-                EXPÉRIENCE & TÉMOIGNAGES
+                RETOURS CLIENTS
               </span>
               <h2
                 id={`reviews-heading-${placement}`}
                 className="font-playfair text-2xl sm:text-3xl font-bold text-[#002141]"
               >
-                Avis Vérifiés de nos Clients
+                Avis de clients
               </h2>
               <div className="w-12 h-0.5 bg-[#AC854B] mx-auto mt-4" />
             </div>
@@ -77,12 +66,13 @@ export const PublicFeedbackSections: React.FC<PublicFeedbackProps> = ({ placemen
                 >
                   <div>
                     {/* Étoiles */}
-                    <div className="flex items-center gap-1 mb-3">
+                    <div className="flex items-center gap-1 mb-3" role="img" aria-label={`Note : ${review.rating} sur 5`}>
                       {[1, 2, 3, 4, 5].map((star) => (
                         <Star
                           key={star}
+                          aria-hidden="true"
                           className={`w-4 h-4 ${
-                            star <= (review.rating || 5)
+                            star <= review.rating
                               ? 'fill-[#AC854B] text-[#AC854B]'
                               : 'text-gray-200'
                           }`}
@@ -98,9 +88,7 @@ export const PublicFeedbackSections: React.FC<PublicFeedbackProps> = ({ placemen
                     )}
 
                     {/* Texte de l'avis */}
-                    <p className="text-xs sm:text-sm text-[#3A3A3A] leading-relaxed mb-4">
-                      "{review.body}"
-                    </p>
+                    <p className="text-xs sm:text-sm text-[#3A3A3A] leading-relaxed mb-4">{review.body}</p>
 
                     {/* Réponse de la Maison */}
                     {review.merchant_response && (
@@ -116,19 +104,13 @@ export const PublicFeedbackSections: React.FC<PublicFeedbackProps> = ({ placemen
                   {/* Auteur & Produit */}
                   <div className="mt-6 pt-4 border-t border-[#002141]/10 flex items-center justify-between text-xs">
                     <div>
-                      <strong className="text-[#002141] block font-semibold">
-                        {review.author_name}
-                      </strong>
+                      <strong className="text-[#002141] block font-semibold">{review.author_name}</strong>
                       {review.product && (
                         <span className="text-[#AC854B] text-[11px] block mt-0.5 font-medium">
                           Modèle : {review.product.name}
                         </span>
                       )}
                     </div>
-                    <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-emerald-800 bg-emerald-50 px-2 py-0.5 border border-emerald-200">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      Approuvé
-                    </span>
                   </div>
                 </article>
               ))}

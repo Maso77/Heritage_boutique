@@ -116,7 +116,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
         throw new Error('Veuillez renseigner vos nom et prénoms complets.');
       }
 
-      const { user } = await signUpWithSupabase({
+      const { user, session } = await signUpWithSupabase({
         email: cleanEmail,
         password: regPassword,
         fullName: regFullName.trim(),
@@ -124,7 +124,14 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
         commune: regCommune
       });
 
-      loginUser(cleanEmail);
+      if (!session || !user) {
+        setAuthTab('login');
+        setAuthSuccess('Votre compte a été créé. Confirmez votre adresse e-mail, puis connectez-vous avant de valider votre commande.');
+        return;
+      }
+      const profile = await fetchUserProfile(user.id);
+      if (!profile) throw new Error("Le profil client n'est pas encore disponible. Veuillez vous reconnecter dans quelques instants.");
+      loginUser(profile.email || cleanEmail);
       setCustomer((prev) => ({
         ...prev,
         fullName: regFullName.trim(),
@@ -133,16 +140,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
         commune: regCommune || prev.commune
       }));
 
-      if (user) {
-        setUserProfile({
-          id: user.id,
-          email: cleanEmail,
-          fullName: regFullName.trim(),
-          phone: regPhone.trim(),
-          commune: regCommune,
-          role: 'customer'
-        });
-      }
+      setUserProfile(profile);
 
       setAuthSuccess('Votre compte utilisateur a été créé avec succès. Vous pouvez maintenant valider votre commande.');
     } catch (err: any) {
@@ -170,7 +168,8 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ navigate }) => {
       });
 
       const prof = user ? await fetchUserProfile(user.id) : null;
-      loginUser(cleanEmail);
+      if (!prof) throw new Error("Ce compte client n'est pas disponible.");
+      loginUser(prof.email || cleanEmail);
 
       setCustomer((prev) => ({
         ...prev,

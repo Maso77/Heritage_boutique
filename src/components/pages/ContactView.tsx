@@ -3,13 +3,14 @@ import { MessageCircle, Phone, Mail, MapPin, Clock, Send, CheckCircle2 } from 'l
 import { usePublicContent } from '../../lib/public-content';
 import { phoneHref, whatsappHref } from '../../lib/site-contact';
 import { PublicFeedbackSections } from '../common/PublicFeedbackSections';
+import { PublicReviewForm } from '../common/PublicReviewForm';
 
 interface ContactViewProps {
   navigate: (route: string) => void;
 }
 
 export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
-  const { siteSettings, faqs, reviews } = usePublicContent();
+  const { siteSettings } = usePublicContent();
   const [form, setForm] = useState({
     name: '',
     email: '',
@@ -39,8 +40,6 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
     }
   };
   const whatsappUrl = whatsappHref(siteSettings, 'Bonjour HERITAGE, je souhaite un conseil au sujet de vos montres.');
-  const contactFaqs = faqs.filter((faq) => faq.placements.includes('contact'));
-  const featuredReviews = reviews.filter((review) => review.is_featured_contact).slice(0, 3);
   const socialLinks = Object.entries(siteSettings?.social_links || {}).filter(([, url]) => Boolean(url));
 
   return (
@@ -283,6 +282,9 @@ export const ContactView: React.FC<ContactViewProps> = ({ navigate }) => {
           </div>
         </div>
         <PublicFeedbackSections placement="contact" />
+        <div className="mt-16">
+          <PublicReviewForm />
+        </div>
       </div>
     </div>
   );

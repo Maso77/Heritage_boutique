@@ -1,14 +1,24 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { CartItem, Order, OrderCustomer, OrderStatus, Product } from '../types';
-import { supabase, syncOrderToSupabase, fetchUserOrdersFromSupabase } from '../lib/supabase';
+import {
+  supabase,
+  syncOrderToSupabase,
+  fetchCurrentCustomerAccount,
+  fetchCustomerCart,
+  saveCustomerCartItem,
+  removeCustomerCartItem,
+  fetchCustomerWishlist,
+  addCustomerWishlistItem,
+  removeCustomerWishlistItem
+} from '../lib/supabase';
 import { usePublicContent } from '../lib/public-content';
 
 interface StoreContextType {
   cart: CartItem[];
-  addToCart: (product: Product, quantity?: number) => void;
-  updateQuantity: (sku: string, quantity: number) => void;
-  removeFromCart: (sku: string) => void;
-  clearCart: () => void;
+  addToCart: (product: Product, quantity?: number) => Promise<void>;
+  updateQuantity: (sku: string, quantity: number) => Promise<void>;
+  removeFromCart: (sku: string) => Promise<void>;
+  clearCart: () => Promise<void>;
   cartSubtotal: number;
   cartItemCount: number;
   isCartOpen: boolean;
@@ -29,190 +39,166 @@ interface StoreContextType {
   setCartToast: (msg: string | null) => void;
   wishlist: string[];
   isInWishlist: (productId: string) => boolean;
-  toggleWishlist: (product: Product) => void;
-  addToWishlist: (product: Product) => void;
-  removeFromWishlist: (productId: string) => void;
-  clearWishlist: () => void;
+  toggleWishlist: (product: Product) => Promise<void>;
+  addToWishlist: (product: Product) => Promise<void>;
+  removeFromWishlist: (productId: string) => Promise<void>;
+  clearWishlist: () => Promise<void>;
   wishlistItemCount: number;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
-const CART_STORAGE_KEY = 'heritage_cart_v1';
-const ORDERS_STORAGE_KEY = 'heritage_orders_v1';
-const USER_STORAGE_KEY = 'heritage_user_v1';
-const WISHLIST_STORAGE_KEY = 'heritage_wishlist_v1';
-
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { products } = usePublicContent();
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(CART_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Validate with current products
-        return parsed;
-      }
-    } catch {
-      // Fallback
-    }
-    return [];
-  });
-
-  const [orders, setOrders] = useState<Order[]>(() => {
-    try {
-      const saved = localStorage.getItem(ORDERS_STORAGE_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  const [userEmail, setUserEmail] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(USER_STORAGE_KEY);
-    } catch {
-      return null;
-    }
-  });
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
   const [cartToast, setCartToast] = useState<string | null>(null);
 
-  const [wishlist, setWishlist] = useState<string[]>(() => {
+  const [wishlist, setWishlist] = useState<string[]>([]);
+
+  const showToast = (message: string) => {
+    setCartToast(message);
+    window.setTimeout(() => setCartToast(null), 4000);
+  };
+
+  const hydrateCustomerSelections = async () => {
+    if (!products.length || !userEmail) {
+      setCart([]);
+      setWishlist([]);
+      return;
+    }
     try {
-      const saved = localStorage.getItem(WISHLIST_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      }
+      const [serverCart, serverWishlist] = await Promise.all([fetchCustomerCart(), fetchCustomerWishlist()]);
+      const productById = new Map<string, Product>(
+        products
+          .filter((product) => product.status === 'published')
+          .map((product): [string, Product] => [String(product.id), product])
+      );
+      setCart(
+        (serverCart.items || []).flatMap((entry) => {
+          const product = productById.get(String(entry.product_id));
+          return product ? [{ product, quantity: Math.max(1, Math.min(Number(entry.quantity) || 1, product.stockCount)) }] : [];
+        })
+      );
+      setWishlist((serverWishlist.items || []).map((entry) => String(entry.product_id)).filter((id) => productById.has(id)));
     } catch {
-      // Fallback
+      // A suspended or expired customer session must not retain a local cart/wishlist.
+      setCart([]);
+      setWishlist([]);
     }
-    return [];
-  });
+  };
 
   useEffect(() => {
-    try {
-      localStorage.setItem(WISHLIST_STORAGE_KEY, JSON.stringify(wishlist));
-    } catch {
-      // Ignore
-    }
-  }, [wishlist]);
-
-  // The published Supabase catalogue is the source of truth for persisted cart
-  // and wishlist entries once it has loaded.
-  useEffect(() => {
-    if (!products.length) return;
-    setCart((current) => current.filter((item) => products.some((product) => product.sku === item.product.sku && product.status === 'published')));
-    setWishlist((current) => current.filter((id) => products.some((product) => product.id === id)));
-  }, [products]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
-    } catch {
-      // Ignore
-    }
-  }, [cart]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(orders));
-    } catch {
-      // Ignore
-    }
-  }, [orders]);
-
-  useEffect(() => {
-    if (userEmail) {
-      localStorage.setItem(USER_STORAGE_KEY, userEmail);
-    } else {
-      localStorage.removeItem(USER_STORAGE_KEY);
-    }
-  }, [userEmail]);
+    void hydrateCustomerSelections();
+  }, [products, userEmail]);
 
   // Écouter les changements d'état d'authentification Supabase
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        const identifier =
-          session.user.email ||
-          session.user.phone ||
-          session.user.user_metadata?.phone ||
-          session.user.user_metadata?.full_name;
-        if (identifier && !userEmail) {
-          setUserEmail(identifier);
-        }
+    let mounted = true;
+    const resetCustomerState = () => {
+      if (!mounted) return;
+      setUserEmail(null);
+      setCart([]);
+      setWishlist([]);
+    };
+    const synchronizeCustomerSession = async (session: { user?: { email?: string | null } } | null) => {
+      if (!session?.user) {
+        resetCustomerState();
+        return;
       }
-    });
+      const account = await fetchCurrentCustomerAccount();
+      if (!mounted) return;
+      if (!account?.profile) {
+        // The server refused the token because the account is not a customer
+        // account or because it was disabled by an administrator.
+        resetCustomerState();
+        return;
+      }
+      setUserEmail(account.profile.email || session.user.email || null);
+    };
+
+    supabase.auth.getSession().then(({ data: { session } }) => void synchronizeCustomerSession(session));
 
     const {
       data: { subscription }
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        const identifier =
-          session.user.email ||
-          session.user.phone ||
-          session.user.user_metadata?.phone;
-        if (identifier) setUserEmail(identifier);
-      }
+      // Defer API work outside Supabase's auth callback to avoid re-entrant
+      // session access while the SDK is notifying subscribers.
+      window.setTimeout(() => void synchronizeCustomerSession(session), 0);
     });
 
     return () => {
+      mounted = false;
       subscription.unsubscribe();
     };
   }, []);
 
-  const addToCart = (product: Product, quantity = 1) => {
+  const ensureCustomerSession = async (): Promise<boolean> => {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) return true;
+    showToast('Connectez-vous à votre compte client pour ajouter une pièce au panier ou à vos favoris.');
+    return false;
+  };
+
+  const addToCart = async (product: Product, quantity = 1) => {
+    if (!(await ensureCustomerSession())) return;
     if (product.stockStatus === 'Indisponible' || product.stockCount <= 0) {
-      setCartToast('Cette pièce est actuellement indisponible.');
+      showToast('Cette pièce est actuellement indisponible.');
       return;
     }
-
-    setCart((prev) => {
-      const existing = prev.find((item) => item.product.sku === product.sku);
-      if (existing) {
-        const nextQty = Math.min(existing.quantity + quantity, product.stockCount);
-        return prev.map((item) =>
-          item.product.sku === product.sku ? { ...item, quantity: nextQty } : item
-        );
-      }
-      return [...prev, { product, quantity: Math.min(quantity, product.stockCount) }];
-    });
-
-    setCartToast('La pièce a été ajoutée à votre panier.');
-    setTimeout(() => {
-      setCartToast(null);
-    }, 4000);
+    const existing = cart.find((item) => String(item.product.id) === String(product.id));
+    const nextQuantity = Math.min((existing?.quantity || 0) + quantity, product.stockCount, 20);
+    try {
+      await saveCustomerCartItem(String(product.id), nextQuantity);
+      setCart((prev) => existing
+        ? prev.map((item) => String(item.product.id) === String(product.id) ? { ...item, quantity: nextQuantity } : item)
+        : [...prev, { product, quantity: nextQuantity }]);
+      showToast('La pièce a été ajoutée à votre panier.');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "L'ajout au panier est impossible pour le moment.");
+    }
   };
 
-  const updateQuantity = (sku: string, quantity: number) => {
+  const updateQuantity = async (sku: string, quantity: number) => {
     if (quantity <= 0) {
-      removeFromCart(sku);
+      await removeFromCart(sku);
       return;
     }
-    setCart((prev) =>
-      prev.map((item) => {
-        if (item.product.sku === sku) {
-          const max = item.product.stockCount;
-          return { ...item, quantity: Math.min(quantity, max) };
-        }
-        return item;
-      })
-    );
+    const target = cart.find((item) => item.product.sku === sku);
+    if (!target || !(await ensureCustomerSession())) return;
+    const nextQuantity = Math.max(1, Math.min(quantity, target.product.stockCount, 20));
+    try {
+      await saveCustomerCartItem(String(target.product.id), nextQuantity);
+      setCart((prev) => prev.map((item) => item.product.sku === sku ? { ...item, quantity: nextQuantity } : item));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'La quantité ne peut pas être mise à jour.');
+    }
   };
 
-  const removeFromCart = (sku: string) => {
-    setCart((prev) => prev.filter((item) => item.product.sku !== sku));
+  const removeFromCart = async (sku: string) => {
+    const target = cart.find((item) => item.product.sku === sku);
+    if (!target || !(await ensureCustomerSession())) return;
+    try {
+      await removeCustomerCartItem(String(target.product.id));
+      setCart((prev) => prev.filter((item) => item.product.sku !== sku));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'La pièce ne peut pas être retirée du panier.');
+    }
   };
 
-  const clearCart = () => {
-    setCart([]);
+  const clearCart = async () => {
+    if (!(await ensureCustomerSession())) return;
+    try {
+      await Promise.all(cart.map((item) => removeCustomerCartItem(String(item.product.id))));
+      setCart([]);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Le panier ne peut pas être vidé pour le moment.');
+    }
   };
 
   const cartSubtotal = cart.reduce((acc, item) => acc + item.product.priceXOF * item.quantity, 0);
@@ -291,6 +277,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     setOrders((prev) => [confirmedOrder, ...prev]);
     setCurrentOrder(confirmedOrder);
+    await Promise.all(cartSnapshot.map((item) => removeCustomerCartItem(String(item.product.id)).catch(() => undefined)));
     setCart([]);
     return confirmedOrder;
   };
@@ -301,65 +288,58 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const logoutUser = () => {
     setUserEmail(null);
+    setCart([]);
+    setWishlist([]);
   };
 
   const isInWishlist = (productId: string): boolean => {
     return wishlist.includes(productId);
   };
 
-  const toggleWishlist = (product: Product) => {
-    setWishlist((prev) => {
-      const exists = prev.includes(product.id);
-      void fetch('/api/public/analytics/wishlist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ product_id: product.id, action: exists ? 'remove' : 'add' })
-      }).catch(() => undefined);
-
+  const toggleWishlist = async (product: Product) => {
+    if (!(await ensureCustomerSession())) return;
+    const exists = wishlist.includes(product.id);
+    try {
       if (exists) {
-        setCartToast(`« ${product.name} » a été retiré de votre liste d'envies.`);
-        setTimeout(() => setCartToast(null), 3500);
-        return prev.filter((id) => id !== product.id);
+        await removeCustomerWishlistItem(String(product.id));
+        setWishlist((prev) => prev.filter((id) => id !== product.id));
+        showToast(`« ${product.name} » a été retiré de votre liste d'envies.`);
       } else {
-        setCartToast(`« ${product.name} » a été ajouté à votre liste d'envies.`);
-        setTimeout(() => setCartToast(null), 3500);
-        return [...prev, product.id];
+        await addCustomerWishlistItem(String(product.id));
+        setWishlist((prev) => [...prev, product.id]);
+        showToast(`« ${product.name} » a été ajouté à votre liste d'envies.`);
       }
-    });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "La liste d'envies ne peut pas être mise à jour.");
+    }
   };
 
-  const addToWishlist = (product: Product) => {
-    setWishlist((prev) => {
-      if (!prev.includes(product.id)) {
-        void fetch('/api/public/analytics/wishlist', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ product_id: product.id, action: 'add' })
-        }).catch(() => undefined);
-
-        setCartToast(`« ${product.name} » a été ajouté à votre liste d'envies.`);
-        setTimeout(() => setCartToast(null), 3500);
-        return [...prev, product.id];
-      }
-      return prev;
-    });
+  const addToWishlist = async (product: Product) => {
+    if (wishlist.includes(product.id)) return;
+    await toggleWishlist(product);
   };
 
-  const removeFromWishlist = (productId: string) => {
-    setWishlist((prev) => {
-      const targetProduct = products.find((p) => p.id === productId);
-      if (targetProduct) {
-        setCartToast(`« ${targetProduct.name} » a été retiré de votre liste d'envies.`);
-        setTimeout(() => setCartToast(null), 3500);
-      }
-      return prev.filter((id) => id !== productId);
-    });
+  const removeFromWishlist = async (productId: string) => {
+    if (!(await ensureCustomerSession())) return;
+    try {
+      await removeCustomerWishlistItem(productId);
+      setWishlist((prev) => prev.filter((id) => id !== productId));
+      const targetProduct = products.find((product) => product.id === productId);
+      showToast(targetProduct ? `« ${targetProduct.name} » a été retiré de votre liste d'envies.` : "La pièce a été retirée de votre liste d'envies.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "La liste d'envies ne peut pas être mise à jour.");
+    }
   };
 
-  const clearWishlist = () => {
-    setWishlist([]);
-    setCartToast("Votre liste d'envies a été vidée.");
-    setTimeout(() => setCartToast(null), 3500);
+  const clearWishlist = async () => {
+    if (!(await ensureCustomerSession())) return;
+    try {
+      await Promise.all(wishlist.map((productId) => removeCustomerWishlistItem(productId)));
+      setWishlist([]);
+      showToast("Votre liste d'envies a été vidée.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "La liste d'envies ne peut pas être vidée.");
+    }
   };
 
   const wishlistItemCount = wishlist.length;
