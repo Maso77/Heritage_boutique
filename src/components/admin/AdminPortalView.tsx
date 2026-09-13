@@ -60,6 +60,7 @@ import {
 } from 'lucide-react';
 import { adminRequest, AdminSession, downloadAdminCsv, getAdminSession, signOutAdministrator } from '../../lib/admin-api';
 import { RichTextEditor } from './RichTextEditor';
+import { BlogManager } from './BlogManager';
 
 interface AdminPortalViewProps {
   navigate: (route: string) => void;
@@ -1086,7 +1087,17 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
         setContactMessages(Array.isArray(res) ? res : []);
       }
       if (tab === 'coordinates') setSiteSettings(await adminRequest('/site-settings'));
-      if (['reviews', 'blogs', 'faqs', 'legal', 'meta', 'pixels'].includes(tab)) {
+      if (tab === 'blogs') {
+        const [records, catalog, gallery] = await Promise.all([
+          adminRequest<AnyRecord[]>('/resources/blogs'),
+          adminRequest<AnyRecord[]>('/products'),
+          adminRequest<AnyRecord[]>('/media'),
+        ]);
+        setResources((current) => ({ ...current, blogs: Array.isArray(records) ? records : [] }));
+        setProducts(Array.isArray(catalog) ? catalog : []);
+        setMedia(Array.isArray(gallery) ? gallery : []);
+      }
+      if (['reviews', 'faqs', 'legal', 'meta', 'pixels'].includes(tab)) {
         const records = await adminRequest<AnyRecord[]>(`/resources/${tab}`);
         setResources((current) => ({ ...current, [tab]: Array.isArray(records) ? records : [] }));
       }
@@ -5468,7 +5479,10 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ navigate }) =>
   if (activeTab === 'media') content = renderMedia();
   if (activeTab === 'messages') content = renderMessages();
   if (activeTab === 'coordinates') content = renderCoordinates();
-  if (['reviews', 'blogs', 'faqs', 'legal', 'meta', 'pixels'].includes(activeTab)) {
+  if (activeTab === 'blogs') {
+    content = <BlogManager articles={resources.blogs || []} products={products} media={media} admin={admin} onRefresh={() => loadTab('blogs')} onNotify={notify} />;
+  }
+  if (['reviews', 'faqs', 'legal', 'meta', 'pixels'].includes(activeTab)) {
     const config = RESOURCE_CONFIGS[activeTab as keyof typeof RESOURCE_CONFIGS];
     content = <ResourceManager config={config} items={resources[activeTab] || []} onRefresh={() => loadTab(activeTab)} onNotify={notify} />;
   }

@@ -1,21 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Product } from '../types';
-import { BLOG_ARTICLES } from '../data/blog';
-
-const FALLBACK_BLOGS: PublicBlogPost[] = BLOG_ARTICLES.map((article, idx) => ({
-  id: `blog-${idx}`,
-  title: article.title,
-  slug: article.slug,
-  excerpt: article.summary,
-  content_html: article.content.map(c => `<h3>${c.heading}</h3>` + c.paragraphs.map(p => `<p>${p}</p>`).join('')).join(''),
-  category: article.category,
-  tags: [article.category],
-  related_product_ids: [],
-  published_at: article.publishedAt,
-  seo_title: article.title,
-  seo_description: article.summary,
-  cover: { public_url: article.coverImage, alt_text: article.title }
-}));
 
 const FALLBACK_SITE_SETTINGS: SiteSettings = {
   business_name: 'HERITAGE',
@@ -158,7 +142,13 @@ export const toProduct = (row: Record<string, any>): Product => {
 };
 
 export async function publicRequest<T>(path: string): Promise<T> {
-  const response = await fetch(`/api/public${path}`, { headers: { Accept: 'application/json' } });
+  // Public editorial content must reflect an unpublish action immediately. In
+  // particular, a browser must never reuse an older response containing an
+  // article that has just been returned to draft in the administration portal.
+  const response = await fetch(`/api/public${path}`, {
+    cache: 'no-store',
+    headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+  });
   if (!response.ok) throw new Error('Les données publiques ne sont pas disponibles.');
   return response.json() as Promise<T>;
 }
@@ -188,14 +178,20 @@ export const PublicContentProvider: React.FC<{ children: React.ReactNode }> = ({
       // This prevents retired demo items from reappearing after an admin deletes
       // or unpublishes the final product in a category.
       setProducts((productRows || []).map(toProduct));
-      setBlogs((posts && posts.length > 0) ? posts : FALLBACK_BLOGS);
+      // A successful Supabase response is authoritative, including when the
+      // journal is intentionally empty. Demo articles remain a resilience-only
+      // fallback for a temporary public API outage.
+      setBlogs(posts || []);
       setSiteSettings(settings || FALLBACK_SITE_SETTINGS);
       setFaqs(faqRows || []);
       setReviews(reviewRows || []);
       setError(null);
     } catch {
       setProducts([]);
-      setBlogs(FALLBACK_BLOGS);
+      // Blogs have no client-side fallback: only the publication endpoint is
+      // authoritative. This prevents bundled demonstration content from ever
+      // being mistaken for an article that remains published.
+      setBlogs([]);
       setSiteSettings(FALLBACK_SITE_SETTINGS);
       setError(null);
     } finally {
@@ -206,7 +202,16 @@ export const PublicContentProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => {
     void refresh();
     const interval = window.setInterval(() => void refresh(), 60_000);
-    return () => window.clearInterval(interval);
+    const refreshWhenReturningToStorefront = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    window.addEventListener('focus', refreshWhenReturningToStorefront);
+    document.addEventListener('visibilitychange', refreshWhenReturningToStorefront);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshWhenReturningToStorefront);
+      document.removeEventListener('visibilitychange', refreshWhenReturningToStorefront);
+    };
   }, []);
 
   const value = useMemo(() => ({ products, blogs, siteSettings, faqs, reviews, loading, error, refresh }), [products, blogs, siteSettings, faqs, reviews, loading, error]);

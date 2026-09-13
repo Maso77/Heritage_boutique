@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlignCenter, AlignLeft, AlignRight, Bold, Code2, Heading2, Image, Italic, Link, List, ListOrdered, Maximize2, Minimize2, Quote, Redo2, RemoveFormatting, Table2, Underline, Undo2 } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, Bold, Code2, Heading2, Heading3, Image, Italic, Link, List, ListOrdered, Maximize2, Minimize2, Quote, Redo2, RemoveFormatting, Table2, Underline, Undo2 } from 'lucide-react';
 
 interface RichTextEditorProps {
   id: string;
@@ -7,6 +7,7 @@ interface RichTextEditorProps {
   value: string;
   onChange: (value: string) => void;
   hint?: string;
+  imageAssets?: Array<{ id: string; public_url: string; alt_text?: string | null; label?: string | null }>;
 }
 
 const toolbar = [
@@ -14,6 +15,7 @@ const toolbar = [
   { command: 'italic', label: 'Italique', icon: Italic },
   { command: 'underline', label: 'Souligné', icon: Underline },
   { command: 'formatBlock', value: 'h2', label: 'Titre', icon: Heading2 },
+  { command: 'formatBlock', value: 'h3', label: 'Sous-titre', icon: Heading3 },
   { command: 'insertUnorderedList', label: 'Liste à puces', icon: List },
   { command: 'insertOrderedList', label: 'Liste numérotée', icon: ListOrdered },
   { command: 'formatBlock', value: 'blockquote', label: 'Citation', icon: Quote },
@@ -27,13 +29,20 @@ const toolbar = [
   { command: 'formatBlock', value: 'pre', label: 'Bloc de code', icon: Code2 }
 ];
 
-export const RichTextEditor: React.FC<RichTextEditorProps> = ({ id, label, value, onChange, hint }) => {
+export const RichTextEditor: React.FC<RichTextEditorProps> = ({ id, label, value, onChange, hint, imageAssets = [] }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== value) editorRef.current.innerHTML = value;
   }, [value]);
+
+  const insertImage = (url: string, alt = '') => {
+    if (!/^https?:\/\//i.test(url)) return;
+    document.execCommand('insertHTML', false, `<img src="${url.replace(/"/g, '&quot;')}" alt="${alt.replace(/"/g, '&quot;')}" />`);
+    editorRef.current?.focus();
+    onChange(editorRef.current?.innerHTML || '');
+  };
 
   const execute = (command: string, commandValue?: string) => {
     if (command === 'createLink') {
@@ -44,7 +53,8 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ id, label, value
       const url = window.prompt('URL de l’image déjà ajoutée dans la Galerie média :');
       if (!url || !/^https?:\/\//i.test(url)) return;
       const alt = window.prompt('Texte alternatif de l’image :') || '';
-      document.execCommand('insertHTML', false, `<img src="${url.replace(/"/g, '&quot;')}" alt="${alt.replace(/"/g, '&quot;')}" />`);
+      insertImage(url, alt);
+      return;
     } else if (command === 'insertTable') {
       const rows = Math.max(1, Math.min(10, Number(window.prompt('Nombre de lignes', '2')) || 2));
       const columns = Math.max(1, Math.min(8, Number(window.prompt('Nombre de colonnes', '2')) || 2));
@@ -81,6 +91,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ id, label, value
           })}
           <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => execute('insertImage')} className="flex h-9 w-9 items-center justify-center text-[#002141] transition hover:bg-[#D6BB8F]/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#AC854B]" aria-label="Insérer une image depuis la galerie" title="Insérer une image depuis la galerie"><Image className="h-4 w-4" aria-hidden="true" /></button>
           <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => execute('insertTable')} className="flex h-9 w-9 items-center justify-center text-[#002141] transition hover:bg-[#D6BB8F]/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#AC854B]" aria-label="Insérer un tableau" title="Insérer un tableau"><Table2 className="h-4 w-4" aria-hidden="true" /></button>
+          {imageAssets.length > 0 && <label className="relative min-w-40 text-xs text-[#002141]"><span className="sr-only">Insérer une image de la galerie</span><select defaultValue="" onChange={(event) => { const asset = imageAssets.find((item) => item.id === event.target.value); if (asset) insertImage(asset.public_url, asset.alt_text || ''); event.currentTarget.value = ''; }} className="h-9 w-full border border-[#002141]/15 bg-white px-2 pr-7 text-xs outline-none focus:border-[#AC854B]" aria-label="Insérer une image de la galerie"><option value="">Insérer depuis la galerie…</option>{imageAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.label || asset.alt_text || 'Image sans nom'}</option>)}</select></label>}
           <button type="button" onClick={() => setFullscreen((current) => !current)} className="ml-auto flex h-9 w-9 items-center justify-center text-[#002141] transition hover:bg-[#D6BB8F]/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#AC854B]" aria-label={fullscreen ? 'Quitter le plein écran' : 'Plein écran'} title={fullscreen ? 'Quitter le plein écran' : 'Plein écran'}>{fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}</button>
         </div>
         <div

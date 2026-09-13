@@ -663,14 +663,56 @@ function resourcePayload(resource: ResourceKey, body: Record<string, unknown>, a
       ? payload.status
       : 'draft';
     payload.category = text(payload.category, 100) || null;
+    payload.cover_media_id = text(payload.cover_media_id, 80) || null;
     payload.cover_image = optionalUrl(payload.cover_image) || text(payload.cover_image, 2000) || null;
-    payload.tags = jsonValue(payload.tags, []);
-    payload.related_product_ids = jsonValue(payload.related_product_ids, []);
+    const rawTags = jsonValue(payload.tags, []);
+    const rawRelatedProducts = jsonValue(payload.related_product_ids, []);
+    payload.tags = Array.isArray(rawTags)
+      ? rawTags.map((tag) => text(tag, 60)).filter(Boolean).slice(0, 20)
+      : [];
+    payload.related_product_ids = Array.isArray(rawRelatedProducts)
+      ? rawRelatedProducts.map((id) => text(id, 120)).filter(Boolean).slice(0, 30)
+      : [];
+    payload.seo_title = text(payload.seo_title, 180) || null;
+    payload.seo_description = text(payload.seo_description, 320) || null;
     payload.author_id = adminId;
-    if (payload.status === 'published' && !payload.published_at) payload.published_at = new Date().toISOString();
+    const contentText = text(String(payload.content_html || '').replace(/<[^>]+>/g, ' '), 100000);
+    if (!payload.title || !contentText) {
+      throw new Error('Le titre et le contenu de l’article sont obligatoires.');
+    }
+
+    const requestedPublication = text(payload.published_at, 80);
+    const publicationDate = requestedPublication ? new Date(requestedPublication) : null;
+    if (requestedPublication && (!publicationDate || Number.isNaN(publicationDate.getTime()))) {
+      throw new Error('La date de publication est invalide.');
+    }
+
+    const now = new Date();
     if (payload.status === 'scheduled') {
-      const scheduledAt = new Date(String(payload.published_at || ''));
-      if (Number.isNaN(scheduledAt.getTime()) || scheduledAt <= new Date()) payload.status = 'draft';
+      if (!publicationDate || publicationDate <= now) {
+        throw new Error('Un article programmé doit avoir une date de publication future.');
+      }
+      payload.published_at = publicationDate.toISOString();
+    }
+    if (payload.status === 'published') {
+      if (publicationDate && publicationDate > now) {
+        payload.status = 'scheduled';
+        payload.published_at = publicationDate.toISOString();
+      } else {
+        payload.published_at = publicationDate?.toISOString() || now.toISOString();
+      }
+    }
+    // A draft or archived article must have no residual publication timestamp.
+    // This keeps the database state unambiguous and protects it from any legacy
+    // query that might only inspect published_at.
+    if (payload.status === 'draft' || payload.status === 'archived') {
+      payload.published_at = null;
+    }
+
+    if (payload.status === 'published' || payload.status === 'scheduled') {
+      if (!payload.excerpt || (!payload.cover_media_id && !payload.cover_image)) {
+        throw new Error('Un article publié ou programmé doit comporter un extrait et une image à la une.');
+      }
     }
   }
 
@@ -875,7 +917,9 @@ app.get('/api/public/products', async (_req: Request, res: Response) => {
       .eq('status', 'published')
       .order('updated_at', { ascending: false });
     if (error) throw error;
-    res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
+    // Do not serve an old published list after an administrator has moved an
+    // article back to draft. Publication changes are editorially sensitive.
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.json(await hydratePublishedProducts(data || []));
   } catch {
     sendError(res, 503, 'Le catalogue est temporairement indisponible.');
@@ -909,7 +953,12 @@ app.get('/api/public/blogs', async (_req: Request, res: Response) => {
       .in('status', ['published', 'scheduled'])
       .order('published_at', { ascending: false, nullsFirst: false });
     if (error) throw error;
-    const visible = (data || []).filter((post: any) => post.status === 'published' || (post.published_at && new Date(post.published_at) <= new Date()));
+    const now = new Date();
+    const visible = (data || []).filter((post: any) => {
+      if (!post.published_at) return post.status === 'published';
+      const publicationDate = new Date(post.published_at);
+      return !Number.isNaN(publicationDate.getTime()) && publicationDate <= now;
+    });
     const mediaIds = visible.map((post: any) => post.cover_media_id).filter(Boolean);
     const { data: assets, error: mediaError } = mediaIds.length
       ? await getSupabaseAdmin().from('media_assets').select('id, public_url, alt_text').in('id', mediaIds)
@@ -2803,6 +2852,18 @@ app.get('/api/admin/resources/:resource', async (req: AdminRequest, res: Respons
         product: review.product_id ? productsById.get(String(review.product_id)) || null : null
       })));
     }
+    if (resource === 'blogs') {
+      const authorIds = (data || []).map((post: any) => post.author_id).filter(Boolean);
+      const { data: authors, error: authorError } = authorIds.length
+        ? await getSupabaseAdmin().from('profiles').select('id, full_name, email').in('id', authorIds)
+        : { data: [], error: null };
+      if (authorError) throw authorError;
+      const authorsById = new Map((authors || []).map((author: any) => [String(author.id), author]));
+      return res.json((data || []).map((post: any) => ({
+        ...post,
+        author: post.author_id ? authorsById.get(String(post.author_id)) || null : null,
+      })));
+    }
     res.json(data || []);
   } catch {
     sendError(res, 503, 'Cette ressource est indisponible.');
@@ -2836,8 +2897,11 @@ app.post('/api/admin/resources/:resource', async (req: AdminRequest, res: Respon
     if (error) throw error;
     await writeAudit(req.admin!.id, 'created', resource, data.id);
     res.status(201).json(data);
-  } catch {
-    sendError(res, 400, 'L’enregistrement a échoué. Vérifiez les champs uniques et obligatoires.');
+  } catch (error: any) {
+    if (resource === 'blogs' && error?.code === '23505') {
+      return sendError(res, 400, 'Ce slug est déjà utilisé par un autre article.');
+    }
+    sendError(res, 400, error instanceof Error ? error.message : 'L’enregistrement a échoué. Vérifiez les champs uniques et obligatoires.');
   }
 });
 
@@ -2859,8 +2923,11 @@ app.patch('/api/admin/resources/:resource/:id', async (req: AdminRequest, res: R
     if (error) throw error;
     await writeAudit(req.admin!.id, 'updated', resource, req.params.id);
     res.json(data);
-  } catch {
-    sendError(res, 400, 'La mise à jour a échoué.');
+  } catch (error: any) {
+    if (resource === 'blogs' && error?.code === '23505') {
+      return sendError(res, 400, 'Ce slug est déjà utilisé par un autre article.');
+    }
+    sendError(res, 400, error instanceof Error ? error.message : 'La mise à jour a échoué.');
   }
 });
 

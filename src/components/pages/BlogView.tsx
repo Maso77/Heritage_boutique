@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { PublicBlogPost, usePublicContent } from '../../lib/public-content';
 import { ArrowRight, Clock, Tag } from 'lucide-react';
 
@@ -7,7 +7,7 @@ interface BlogViewProps {
 }
 
 export const BlogView: React.FC<BlogViewProps> = ({ navigate }) => {
-  const { blogs } = usePublicContent();
+  const { blogs, products } = usePublicContent();
   const [selectedArticle, setSelectedArticle] = useState<PublicBlogPost | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('Tous');
 
@@ -17,6 +17,34 @@ export const BlogView: React.FC<BlogViewProps> = ({ navigate }) => {
     selectedCategory === 'Tous'
       ? blogs
       : blogs.filter((art) => art.category === selectedCategory);
+  const relatedProducts = useMemo(
+    () => selectedArticle
+      ? products.filter((product) => selectedArticle.related_product_ids.map(String).includes(String(product.id)))
+      : [],
+    [products, selectedArticle],
+  );
+
+  // An article can be switched to draft while it is open in another tab. Do
+  // not keep rendering that stale article after the public catalogue refreshes.
+  useEffect(() => {
+    if (selectedArticle && !blogs.some((article) => article.id === selectedArticle.id)) {
+      setSelectedArticle(null);
+    }
+  }, [blogs, selectedArticle]);
+
+  useEffect(() => {
+    if (!selectedArticle) return undefined;
+    const previousTitle = document.title;
+    const description = document.querySelector('meta[name="description"]');
+    const previousDescription = description?.getAttribute('content') || '';
+    document.title = selectedArticle.seo_title || selectedArticle.title;
+    if (description) description.setAttribute('content', selectedArticle.seo_description || selectedArticle.excerpt || '');
+
+    return () => {
+      document.title = previousTitle;
+      if (description) description.setAttribute('content', previousDescription);
+    };
+  }, [selectedArticle]);
 
   if (selectedArticle) {
     return (
@@ -75,7 +103,18 @@ export const BlogView: React.FC<BlogViewProps> = ({ navigate }) => {
               />
             </div>}
 
-            <div className="space-y-8 text-[#3A3A3A] leading-relaxed text-sm sm:text-base [&_h2]:font-playfair [&_h2]:text-xl [&_h2]:sm:text-2xl [&_h2]:font-bold [&_h2]:text-[#002141] [&_p]:mb-4 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: selectedArticle.content_html }} />
+            <div className="space-y-8 text-[#3A3A3A] leading-relaxed text-sm sm:text-base [&_h2]:font-playfair [&_h2]:text-xl [&_h2]:sm:text-2xl [&_h2]:font-bold [&_h2]:text-[#002141] [&_h3]:font-playfair [&_h3]:text-lg [&_h3]:font-bold [&_h3]:text-[#002141] [&_p]:mb-4 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_blockquote]:border-l-2 [&_blockquote]:border-[#AC854B] [&_blockquote]:pl-4 [&_blockquote]:font-playfair [&_blockquote]:italic [&_a]:font-semibold [&_a]:text-[#002141] [&_a]:underline [&_a]:decoration-[#AC854B] [&_a]:underline-offset-4 [&_img]:my-6 [&_img]:h-auto [&_img]:max-w-full [&_img]:border [&_img]:border-[#002141]/10 [&_table]:my-6 [&_table]:w-full [&_table]:border-collapse [&_table]:text-left [&_th]:border [&_th]:border-[#002141]/15 [&_th]:bg-[#FAF9F7] [&_th]:p-3 [&_th]:font-semibold [&_td]:border [&_td]:border-[#002141]/15 [&_td]:p-3" dangerouslySetInnerHTML={{ __html: selectedArticle.content_html }} />
+
+            {relatedProducts.length > 0 && <section className="border-t border-[#002141]/10 pt-8" aria-labelledby="related-products-heading">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#AC854B]">Sélection associée</p>
+              <h2 id="related-products-heading" className="font-playfair mt-2 text-2xl font-bold text-[#002141]">Pièces liées à cet article</h2>
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                {relatedProducts.map((product) => <button key={product.id} type="button" onClick={() => navigate(`/montres/${product.slug}`)} className="group flex items-center gap-4 border border-[#002141]/15 bg-[#FAF9F7] p-3 text-left transition-colors hover:border-[#AC854B] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#AC854B]">
+                  {product.primaryImage && <img src={product.primaryImage} alt="" className="h-16 w-16 shrink-0 object-cover" />}
+                  <span className="min-w-0"><span className="block truncate font-semibold text-[#002141] group-hover:text-[#AC854B]">{product.name}</span><span className="mt-1 block text-xs text-[#3A3A3A]">Voir la fiche produit</span></span>
+                </button>)}
+              </div>
+            </section>}
 
             <div className="pt-8 border-t border-[#002141]/10 flex flex-col sm:flex-row items-center justify-between gap-4">
               <button
